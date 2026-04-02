@@ -9,6 +9,12 @@
 builder = "nixpacks"
 buildCommand = "npm ci && node build"
 
+# Pin Node.js 22 — required by the server (uses fetch, which landed in Node 18
+# but the codebase targets 22 LTS for stability).
+# This sets the NIXPACKS_NODE_VERSION env var that Nixpacks reads.
+[build.nixpacks]
+nodeVersion = "22"
+
 [deploy]
 # Procfile is also present and Railway respects it, but declaring it here
 # makes the intent explicit and allows the healthcheck below to work.
