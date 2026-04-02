@@ -7,7 +7,7 @@
 # npm ci also auto-copies config-example.js → config.js if config.js is absent,
 # but our repo ships config/config.js directly so that step is a no-op.
 builder = "nixpacks"
-buildCommand = "npm ci && node build"
+buildCommand = "npm ci --cache /tmp/.npm && node build"
 
 # Pin Node.js 22 — required by the server (uses fetch, which landed in Node 18
 # but the codebase targets 22 LTS for stability).
