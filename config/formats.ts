@@ -390,6 +390,53 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		],
 	},
 
+	// 2v2 Team Battle (Multi)
+	///////////////////////////////////////////////////////////////////
+
+	{
+		section: "2v2 Team Battle",
+		column: 1,
+	},
+	{
+		name: "[Gen 9] 2v2 Multi Random Battle",
+		desc: `Four players form two teams of two. Each player gets a random team of three Pok&eacute;mon. Partners share a side in a doubles-style battle &mdash; coordinate with your teammate!`,
+		mod: 'gen9',
+		team: 'random',
+		gameType: 'multi',
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Sleep Clause Mod', 'Illusion Level Mod',
+		],
+	},
+	{
+		name: "[Gen 9] 2v2 Multi Battle",
+		desc: `Challenge format: four players, two teams. Each player brings three Pok&eacute;mon. Teammates share a doubles side &mdash; plan your team composition together before the battle!`,
+		mod: 'gen9',
+		gameType: 'multi',
+		searchShow: false,
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Standard', 'Evasion Abilities Clause', 'Sleep Moves Clause', '!Sleep Clause Mod',
+		],
+		banlist: [
+			'Uber', 'AG', 'Arena Trap', 'Moody', 'Shadow Tag', 'King\'s Rock', 'Razor Fang', 'Baton Pass', 'Last Respects', 'Shed Tail',
+		],
+	},
+	{
+		name: "[Gen 9] 2v2 Multi Anything Goes",
+		desc: `Challenge format: four players, two teams. No bans, no restrictions. Each player brings three Pok&eacute;mon. Bring your strongest team!`,
+		mod: 'gen9',
+		gameType: 'multi',
+		searchShow: false,
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod',
+		],
+	},
+
 	// Draft League
 	///////////////////////////////////////////////////////////////////
 

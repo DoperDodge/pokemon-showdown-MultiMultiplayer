@@ -1,0 +1,31 @@
+# Railway deployment configuration for Pokemon Showdown MultiMultiplayer
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+# Build TypeScript before starting.
+# The `build` script (esbuild) compiles everything to dist/.
+# npm ci also auto-copies config-example.js → config.js if config.js is absent,
+# but our repo ships config/config.js directly so that step is a no-op.
+builder = "nixpacks"
+buildCommand = "npm ci && node build"
+
+[deploy]
+# Procfile is also present and Railway respects it, but declaring it here
+# makes the intent explicit and allows the healthcheck below to work.
+startCommand = "node pokemon-showdown $PORT"
+
+# Railway will send GET / to confirm the process is up.
+# The static server in sockets.ts responds to HTTP on the same port,
+# redirecting to the psim.us client — that 200 is enough for a healthcheck.
+healthcheckPath = "/"
+healthcheckTimeout = 60
+
+# Always restart on crash (Railway default is "on_failure").
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[[services]]
+# If you have multiple services in a monorepo, scope this file to just the
+# game-server service by setting the name here.  A single-service project
+# can leave this section out entirely.
+# name = "game-server"
