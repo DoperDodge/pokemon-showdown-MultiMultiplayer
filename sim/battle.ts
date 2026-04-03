@@ -1910,6 +1910,23 @@ export class Battle {
 			// sync side conditions
 			this.sides[2]!.sideConditions = this.sides[0].sideConditions;
 			this.sides[3]!.sideConditions = this.sides[1].sideConditions;
+		} else if (this.gameType === '2v1') {
+			// p1 (sides[0]) and p3 (sides[2]) form the team; p2 (sides[1]) is the solo player
+			this.sides[0].foe = this.sides[1];
+			this.sides[1].foe = this.sides[0]; // primary adjacency foe for targeting
+			this.sides[2]!.foe = this.sides[1];
+			this.sides[0].allySide = this.sides[2]!;
+			this.sides[2]!.allySide = this.sides[0];
+			// sync side conditions between team members
+			this.sides[2]!.sideConditions = this.sides[0].sideConditions;
+			// Give the solo player a +1 boost to all stats to compensate for 2v1 disadvantage
+			for (const pokemon of this.sides[1].pokemon) {
+				pokemon.boosts.atk = 1;
+				pokemon.boosts.def = 1;
+				pokemon.boosts.spa = 1;
+				pokemon.boosts.spd = 1;
+				pokemon.boosts.spe = 1;
+			}
 		} else {
 			this.sides[1].foe = this.sides[0];
 			this.sides[0].foe = this.sides[1];
