@@ -12,7 +12,9 @@
  */
 
 import { execSync } from "child_process";
+import * as crypto from 'crypto';
 import { ProcessManager, type Streams } from '../lib';
+import { escapeHTML } from '../lib/utils';
 import { BattleStream } from "../sim/battle-stream";
 import { RoomGamePlayer, RoomGame } from "./room-game";
 import * as ConfigLoader from './config-loader';
@@ -55,6 +57,151 @@ const DISCONNECTION_BANK_TIME = 300;
 // time after a player disabling the timer before they can re-enable it
 const TIMER_COOLDOWN = 20 * SECONDS;
 const LOCKDOWN_PERIOD = 30 * 60 * 1000; // 30 minutes
+
+/*********************************************************
+ * Pokémon name colorization helpers
+ *
+ * Highlights the user's own Pokémon names in the battle
+ * log with their username color. Uses the same MD5-based
+ * HSL algorithm as the PS client's hashColor function.
+ *********************************************************/
+
+/** Compute username color matching the PS client algorithm */
+function usernameColor(name: string): string {
+	const id = toID(name);
+	const hash = crypto.createHash('md5').update(id).digest('hex');
+	const H = parseInt(hash.substr(4, 4), 16) % 360;
+	const S = parseInt(hash.substr(0, 4), 16) % 50 + 40;
+	const L = Math.floor(parseInt(hash.substr(8, 4), 16) % 20 + 30);
+	return `hsl(${H},${S}%,${L}%)`;
+}
+
+/** Compute the hue bucket (0-350, step 10) for a username — used for CSS class injection */
+function usernameHueBucket(name: string): number {
+	const id = toID(name);
+	const hash = crypto.createHash('md5').update(id).digest('hex');
+	const H = parseInt(hash.substr(4, 4), 16) % 360;
+	return Math.round(H / 10) * 10 % 360;
+}
+
+/** Extract Pokémon nickname from a protocol reference like "p1a: Pikachu" */
+function pokemonName(ref: string): string {
+	const idx = ref.indexOf(': ');
+	return idx >= 0 ? ref.slice(idx + 2).trim() : ref.trim();
+}
+
+/** Extract player slot (e.g. "p1") from a protocol reference like "p1a: Pikachu" */
+function pokemonSlot(ref: string): string {
+	const match = ref.match(/^p(\d)/);
+	return match ? `p${match[1]}` : '';
+}
+
+/** Format a Pokémon name as HTML, colored if it belongs to the viewer */
+function formatPokemonHTML(ref: string, viewerSlot: string, viewerColor: string): string {
+	const name = escapeHTML(pokemonName(ref));
+	const slot = pokemonSlot(ref);
+	if (slot === viewerSlot) {
+		return `<strong style="color:${viewerColor}">${name}</strong>`;
+	}
+	return `<strong>${name}</strong>`;
+}
+
+/**
+ * Generate colored HTML text for a battle protocol line.
+ * Returns null for message types we don't handle.
+ */
+function colorizedBattleHTML(
+	line: string, viewerSlot: string, viewerColor: string,
+	playerNames: Map<string, string>
+): string | null {
+	const parts = line.split('|');
+	// parts[0] is empty string before first |
+	const cmd = parts[1];
+
+	switch (cmd) {
+	case 'move': {
+		// |move|p1a: Pikachu|Thunderbolt|p2a: Charizard|[still]|[anim]...
+		const pokemon = formatPokemonHTML(parts[2], viewerSlot, viewerColor);
+		const moveName = escapeHTML(parts[3] || '');
+		return `${pokemon} used <strong>${moveName}</strong>!`;
+	}
+	case 'switch': {
+		// |switch|p1a: Pikachu|Pikachu, L50, M|100/100
+		const ref = parts[2];
+		const pokemon = formatPokemonHTML(ref, viewerSlot, viewerColor);
+		const slot = pokemonSlot(ref);
+		if (slot === viewerSlot) {
+			return `Go! ${pokemon}!`;
+		}
+		const trainerName = playerNames.get(slot) || 'The opponent';
+		return `${escapeHTML(trainerName)} sent out ${pokemon}!`;
+	}
+	case 'drag': {
+		// |drag|p1a: Pikachu|Pikachu, L50, M|100/100
+		const pokemon = formatPokemonHTML(parts[2], viewerSlot, viewerColor);
+		return `${pokemon} was dragged out!`;
+	}
+	case 'faint': {
+		// |faint|p1a: Pikachu
+		const pokemon = formatPokemonHTML(parts[2], viewerSlot, viewerColor);
+		return `${pokemon} fainted!`;
+	}
+	default:
+		return null;
+	}
+}
+
+/**
+ * Check if a protocol line has [silent] already (we shouldn't double-add it)
+ * or has kwargs that would interfere.
+ */
+function hasKwarg(line: string, kwarg: string): boolean {
+	return line.includes(`[${kwarg}]`);
+}
+
+/**
+ * Given a battle protocol line, produce the extra |split| lines to inject
+ * colored HTML for each player and spectators, or return null to skip.
+ */
+function buildColorSplits(
+	line: string,
+	players: RoomBattlePlayer[],
+	playerNames: Map<string, string>,
+): { silentLine: string; splits: string[] } | null {
+	// Skip lines that are already silent
+	if (hasKwarg(line, 'silent')) return null;
+
+	// Check if any player colorization produces non-null output
+	const firstPlayer = players[0];
+	if (!firstPlayer) return null;
+	const testColor = usernameColor(firstPlayer.name);
+	if (!colorizedBattleHTML(line, firstPlayer.slot, testColor, playerNames)) return null;
+
+	const splits: string[] = [];
+
+	// For each player, add a |split|pN block with colored HTML (secret) and empty (shared)
+	for (const player of players) {
+		const color = usernameColor(player.name);
+		const html = colorizedBattleHTML(line, player.slot, color, playerNames);
+		if (!html) continue;
+		splits.push(`|split|${player.slot}`);
+		splits.push(`|raw|<div class="pokemon-highlight">${html}</div>`);
+		splits.push('');
+	}
+
+	// For spectators (channel 0), add uncolored text
+	const spectatorHtml = colorizedBattleHTML(line, '', '', playerNames);
+	if (spectatorHtml) {
+		splits.push(`|split|p0`);
+		splits.push(`|raw|<div class="pokemon-highlight">${spectatorHtml}</div>`);
+		splits.push('');
+	}
+
+	// Add [silent] to the original protocol line to suppress default client text
+	const silentLine = line + '|[silent]';
+
+	return { silentLine, splits };
+}
 
 export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 	readonly slot: SideID;
@@ -678,7 +825,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return false;
 		}
 
-		const validSlots = this.players.filter(player => !player.id).map(player => player.slot);
+		const validSlots = this.players.filter(player => !player.id && !player.isBot).map(player => player.slot);
 
 		if (slot && !validSlots.includes(slot)) {
 			user.popup(`This battle already has a user in slot ${slot}.`);
@@ -784,34 +931,89 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			resolver(lines);
 			break;
 
-		case 'update':
-			for (const line of lines.slice(1)) {
+		case 'update': {
+			// Build player name lookup for colorization
+			const playerNames = new Map<string, string>();
+			for (const player of this.players) {
+				playerNames.set(player.slot, player.name);
+			}
+
+			const updateLines = lines.slice(1);
+			let i = 0;
+			while (i < updateLines.length) {
+				const line = updateLines[i];
+
 				if (line.startsWith('|turn|')) {
 					this.turn = parseInt(line.slice(6));
 				}
+
 				// Track opponent species for bot AI (|switch|, |drag|, |replace|)
-				if (line.startsWith('|switch|') || line.startsWith('|drag|') || line.startsWith('|replace|')) {
-					// Format: |switch|p2a: Charizard|Charizard, L100, M|281/281
-					const parts = line.split('|');
-					if (parts.length >= 4) {
-						const slotStr = parts[2]; // e.g. "p2a: Charizard"
-						const slotMatch = slotStr.match(/^(p\d+)/);
-						const detailsStr = parts[3]; // e.g. "Charizard, L100, M"
-						if (slotMatch && detailsStr) {
-							const slot = slotMatch[1];
-							const species = detailsStr.split(',')[0].trim();
-							this.botOpponentSpecies.set(slot, species);
+				const trackLine = (l: string) => {
+					if (l.startsWith('|switch|') || l.startsWith('|drag|') || l.startsWith('|replace|')) {
+						const parts = l.split('|');
+						if (parts.length >= 4) {
+							const slotStr = parts[2];
+							const slotMatch = slotStr.match(/^(p\d+)/);
+							const detailsStr = parts[3];
+							if (slotMatch && detailsStr) {
+								const slot = slotMatch[1];
+								const species = detailsStr.split(',')[0].trim();
+								this.botOpponentSpecies.set(slot, species);
+							}
 						}
 					}
+				};
+
+				if (line.startsWith('|split|')) {
+					// This is a sim-generated split block (3 lines: split marker, secret, shared)
+					const secretLine = updateLines[i + 1] || '';
+					const sharedLine = updateLines[i + 2] || '';
+					trackLine(secretLine);
+
+					// Try to colorize the secret line (e.g. |switch| with exact HP)
+					const colorResult = buildColorSplits(secretLine, this.players, playerNames);
+					if (colorResult) {
+						// Add the original split with [silent] appended to both lines
+						this.room.add(line); // |split|pN
+						this.room.add(secretLine + '|[silent]');
+						this.room.add(sharedLine ? sharedLine + '|[silent]' : '');
+						// Add our colored splits
+						for (const splitLine of colorResult.splits) {
+							this.room.add(splitLine);
+						}
+					} else {
+						// No colorization — pass through unchanged
+						this.room.add(line);
+						this.room.add(secretLine);
+						this.room.add(sharedLine);
+					}
+					i += 3;
+					continue;
 				}
-				this.room.add(line);
+
+				trackLine(line);
+
+				// Try to colorize non-split lines (e.g. |move|, |faint|)
+				const colorResult = buildColorSplits(line, this.players, playerNames);
+				if (colorResult) {
+					this.room.add(colorResult.silentLine);
+					for (const splitLine of colorResult.splits) {
+						this.room.add(splitLine);
+					}
+				} else {
+					this.room.add(line);
+				}
+
 				if (line.startsWith(`|bigerror|You will auto-tie if `) && Config.allowrequestingties && !this.room.tour) {
 					this.room.add(`|-hint|If you want to tie earlier, consider using \`/offertie\`.`);
 				}
+
+				i++;
 			}
 			this.room.update();
 			this.checkActive();
 			break;
+		}
 
 		case 'sideupdate': {
 			const slot = lines[1];
@@ -1048,6 +1250,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			player.active = true;
 			this.timer.checkActivity();
 			this.room.add(`|player|${player.slot}|${user.name}|${user.avatar}|`);
+			// Inject a hidden color marker so CSS :has() can color the stat bar
+			const hueBucket = usernameHueBucket(user.name);
+			this.room.add(`|split|${player.slot}`);
+			this.room.add(`|raw|<div class="uhue uhue-${hueBucket}" style="display:none"></div>`);
+			this.room.add('');
 			Chat.runHandlers('onBattleJoin', player.slot, user, this);
 		}
 	}
@@ -1131,15 +1338,31 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	 * Add an AI bot to an open player slot.
 	 * @param botName  Display name, e.g. "BotHard2"
 	 * @param team     Pre-built team string, or '' for random
+	 * @param targetSlot  Specific slot to place the bot in (e.g. 'p2')
 	 */
-	addBotPlayer(botName: string, team = '') {
+	addBotPlayer(botName: string, team = '', targetSlot?: SideID) {
 		const difficulty = BattleBot.parseBotName(botName);
 		if (!difficulty) throw new Error(`Invalid bot name: ${botName}`);
-		const player = super.addPlayer(botName);
-		if (!player) return null;
+
+		// Reuse an existing empty player slot (created by the constructor when
+		// fewer players were provided than playerCap) instead of creating a new
+		// slot that the battle engine doesn't expect.
+		let player: RoomBattlePlayer | undefined | null;
+		if (targetSlot) {
+			player = this.playerBySlot(targetSlot);
+			if (!player || player.id || player.isBot || player.hasTeam) return null;
+		} else {
+			player = this.players.find(p => !p.id && !p.isBot && !p.hasTeam);
+		}
+		if (player) {
+			player.name = botName;
+		} else {
+			player = super.addPlayer(botName);
+			if (!player) return null;
+		}
+
 		player.isBot = true;
 		player.botDifficulty = difficulty;
-		player.name = botName;
 		player.knownActive = true;
 		(this as any)[player.slot] = player;
 		const options = { name: botName, avatar: 'unknownf', team: team || undefined, rating: 0 };
@@ -1233,6 +1456,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			if (playerOpts) player.hasTeam = true;
 
 			this.room.add(`|player|${slot}|${player.name}|${user.avatar}|`);
+			// Inject a hidden color marker so CSS :has() can color the stat bar
+			const hueBucket = usernameHueBucket(player.name);
+			this.room.add(`|split|${slot}`);
+			this.room.add(`|raw|<div class="uhue uhue-${hueBucket}" style="display:none"></div>`);
+			this.room.add('');
 			Chat.runHandlers('onBattleJoin', slot as string, user, this);
 		} else {
 			player.active = false;
@@ -1274,6 +1502,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		const delayStart = this.options.delayedStart || !!this.options.inputLog;
 		const users = this.players.map(player => {
+			if (player.isBot) return null; // bots don't have real User objects
 			const user = player.getUser();
 			if (!user && !delayStart) {
 				throw new Error(`User ${player.id} not found on ${this.roomid} battle creation`);
@@ -1281,7 +1510,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return user;
 		});
 		if (!delayStart) {
-			Rooms.global.onCreateBattleRoom(users as User[], this.room, { rated: this.rated });
+			const realUsers = users.filter((u): u is User => u !== null);
+			Rooms.global.onCreateBattleRoom(realUsers, this.room, { rated: this.rated });
 			this.started = true;
 		} else if (delayStart === 'multi') {
 			this.room.add(`|uhtml|invites|<div class="broadcast broadcast-blue"><strong>This is a 4-player challenge battle</strong><br />The players will need to add more players before the battle can start.</div>`);
@@ -1289,7 +1519,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	}
 
 	invitesFull() {
-		return this.players.every(player => player.id || player.invite);
+		return this.players.every(player => player.id || player.invite || player.isBot);
 	}
 	/** true = send to every player; falsy = send to no one */
 	sendInviteForm(connection: Connection | User | null | boolean) {
@@ -1300,8 +1530,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		if (!connection) return;
 
 		const playerForms = this.players.map(player => (
-			player.id ? (
-				`<form><label>Player ${player.num}: <strong>${player.name}</strong></label></form>`
+			player.id || player.isBot ? (
+				`<form><label>Player ${player.num}: <strong>${player.name}</strong>${player.isBot ? ' (Bot)' : ''}</label></form>`
 			) : player.invite ? (
 				`<form data-submitsend="/msgroom ${this.roomid},/uninvitebattle ${player.invite}"><label>Player ${player.num}: <strong>${player.invite}</strong> (invited) <button type="submit">Uninvite</button></label></form>`
 			) : (
