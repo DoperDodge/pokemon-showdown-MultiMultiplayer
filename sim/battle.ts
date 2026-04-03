@@ -119,9 +119,9 @@ export class Battle {
 	 * The number of active pokemon per half-field.
 	 * See header comment in side.ts for details.
 	 */
-	readonly activePerHalf: 1 | 2 | 3;
+	readonly activePerHalf: number;
 	readonly field: Field;
-	readonly sides: [Side, Side] | [Side, Side, Side, Side];
+	readonly sides: Side[];
 	readonly prngSeed: PRNGSeed;
 	dex: ModdedDex;
 	gen: number;
@@ -219,7 +219,7 @@ export class Battle {
 		this.field = new Field(this);
 		this.sides = Array(format.playerCount).fill(null) as any;
 		this.activePerHalf = this.gameType === 'triples' ? 3 :
-			(format.playerCount > 2 || this.gameType === 'doubles') ? 2 :
+			(this.gameType === 'multi' || this.gameType === '2v1' || this.gameType === 'doubles') ? 2 :
 			1;
 		this.prng = options.prng || new PRNG(options.seed || undefined);
 		this.prngSeed = this.prng.startingSeed;
@@ -261,7 +261,12 @@ export class Battle {
 		this.effectOrder = 0;
 		this.quickClawRoll = false;
 		this.speedOrder = [];
-		for (let i = 0; i < this.activePerHalf * 2; i++) {
+		// For FFA each side has 1 active Pokemon, so we need one slot per side.
+		// For all other game types the field has activePerHalf * 2 slots.
+		const speedOrderSize = this.gameType === 'freeforall'
+			? format.playerCount
+			: this.activePerHalf * 2;
+		for (let i = 0; i < speedOrderSize; i++) {
 			this.speedOrder.push(i);
 		}
 
@@ -1927,13 +1932,16 @@ export class Battle {
 				pokemon.boosts.spd = 1;
 				pokemon.boosts.spe = 1;
 			}
+		} else if (this.gameType === 'freeforall') {
+			// Each side's .foe points to the next side in a circle; the foes()
+			// method in side.ts returns all other sides dynamically, so this is
+			// only used as a fallback / primary-target hint.
+			for (let i = 0; i < this.sides.length; i++) {
+				this.sides[i].foe = this.sides[(i + 1) % this.sides.length];
+			}
 		} else {
 			this.sides[1].foe = this.sides[0];
 			this.sides[0].foe = this.sides[1];
-			if (this.sides.length > 2) { // ffa
-				this.sides[2]!.foe = this.sides[3]!;
-				this.sides[3]!.foe = this.sides[2]!;
-			}
 		}
 
 		this.add('gen', this.gen);

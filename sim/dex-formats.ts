@@ -413,7 +413,7 @@ export class Format extends BasicEffect implements Readonly<BasicEffect> {
 	/** Game type. */
 	readonly gameType: GameType;
 	/** Number of players, based on game type, for convenience */
-	readonly playerCount: 2 | 3 | 4;
+	readonly playerCount: number;
 	/** List of rule names. */
 	readonly ruleset: string[];
 	/**

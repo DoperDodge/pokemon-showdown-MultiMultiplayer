@@ -1943,6 +1943,9 @@ export class GameRoom extends BasicRoom {
 		this.p2 = options.players?.[1]?.user || null;
 		this.p3 = options.players?.[2]?.user || null;
 		this.p4 = options.players?.[3]?.user || null;
+		for (let i = 4; i < (options.players?.length ?? 0); i++) {
+			(this as any)[`p${i + 1}`] = options.players![i]?.user || null;
+		}
 
 		this.rated = options.rated === true ? 1 : options.rated || 0;
 

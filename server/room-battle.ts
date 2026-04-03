@@ -528,6 +528,10 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	p2: RoomBattlePlayer = null!;
 	p3: RoomBattlePlayer = null!;
 	p4: RoomBattlePlayer = null!;
+	/** Look up a player by their slot string (p1, p2, … p100). */
+	playerBySlot(slot: string): RoomBattlePlayer | undefined {
+		return this.players.find(p => p.slot === slot);
+	}
 	inviteOnlySetter: ID | null = null;
 	logData: AnyObject | null = null;
 	endType: 'forfeit' | 'forced' | 'normal' = 'normal';
@@ -682,14 +686,15 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		slot ??= validSlots[0];
 
-		if (this[slot].invite === user.id) {
+		const slotPlayer = this.playerBySlot(slot);
+		if (slotPlayer?.invite === user.id) {
 			this.room.auth.set(user.id, Users.PLAYER_SYMBOL);
 		} else if (!user.can('joinbattle', null, this.room)) {
 			user.popup(`You must be set as a player to join a battle you didn't start. Ask a player to use /addplayer on you to join this battle.`);
 			return false;
 		}
 
-		this.setPlayerUser(this[slot], user, playerOpts);
+		this.setPlayerUser(slotPlayer!, user, playerOpts);
 		if (validSlots.length - 1 <= 0) {
 			// all players have joined, start the battle
 			// onCreateBattleRoom crashes if some users are unavailable at start of battle
@@ -783,26 +788,30 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			break;
 
 		case 'sideupdate': {
-			const slot = lines[1] as SideID;
-			const player = this[slot];
+			const slot = lines[1];
+			const player = this.playerBySlot(slot);
 			if (lines[2].startsWith(`|error|[Invalid choice] Can't do anything`)) {
 				// ... should not happen
 			} else if (lines[2].startsWith(`|error|[Invalid choice]`)) {
 				const undoFailed = lines[2].includes(`Can't undo`);
-				const request = this[slot].request;
-				request.isWait = undoFailed ? 'cantUndo' : false;
-				request.choice = '';
+				if (player) {
+					const request = player.request;
+					request.isWait = undoFailed ? 'cantUndo' : false;
+					request.choice = '';
+				}
 			} else if (lines[2].startsWith(`|request|`)) {
 				this.rqid++;
 				const request = JSON.parse(lines[2].slice(9));
 				request.rqid = this.rqid;
 				const requestJSON = JSON.stringify(request);
-				this[slot].request = {
-					rqid: this.rqid,
-					request: requestJSON,
-					isWait: request.wait ? 'cantUndo' : false,
-					choice: '',
-				};
+				if (player) {
+					player.request = {
+						rqid: this.rqid,
+						request: requestJSON,
+						isWait: request.wait ? 'cantUndo' : false,
+						choice: '',
+					};
+				}
 				this.requestCount++;
 				player?.sendRoom(`|request|${requestJSON}`);
 				if (!request.update) this.timer.nextRequest(player);
@@ -1058,7 +1067,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		if (typeof user === 'string') user = null;
 		if (!player) return null;
 		const slot = player.slot;
-		this[slot] = player;
+		(this as any)[slot] = player;
 
 		if (playerOpts) {
 			const options = {
@@ -1179,8 +1188,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	start() {
 		if (this.gameType === 'multi') {
 			this.room.title = `Team ${this.p1.name} vs. Team ${this.p2.name}`;
-		} else if (this.gameType === 'freeforall') {
-			// p1 vs. p2 vs. p3 vs. p4 is too long of a title
+		} else if (this.gameType === 'freeforall' || this.gameType === '2v1') {
+			// Long player lists collapse to "X and friends"
 			this.room.title = `${this.p1.name} and friends`;
 		} else {
 			this.room.title = `${this.p1.name} vs. ${this.p2.name}`;
@@ -1258,6 +1267,9 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		this.playerTable = {};
 		this.players = [];
+		for (const player of this.players) {
+			(this as any)[player.slot] = null;
+		}
 		this.p1 = null!;
 		this.p2 = null!;
 		this.p3 = null!;

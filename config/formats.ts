@@ -398,6 +398,31 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		column: 1,
 	},
 	{
+		name: "[Gen 9] 1v1v1 Random Battle",
+		desc: `Three-player free-for-all! Everyone gets a random team of three Pok&eacute;mon. Every player fights every other &mdash; last one standing wins!`,
+		mod: 'gen9',
+		team: 'randomFFA',
+		gameType: 'freeforall',
+		playerCount: 3,
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Sleep Clause Mod', 'Illusion Level Mod',
+		],
+	},
+	{
+		name: "[Gen 9] 1v1v1v1 Random Battle",
+		desc: `Four-player free-for-all! Everyone gets a random team of three Pok&eacute;mon. Every player fights every other &mdash; last one standing wins!`,
+		mod: 'gen9',
+		team: 'randomFFA',
+		gameType: 'freeforall',
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Sleep Clause Mod', 'Illusion Level Mod',
+		],
+	},
+	{
 		name: "[Gen 9] 2v1 Random Battle",
 		desc: `Two players team up against a solo opponent. Everyone gets a random team of three Pok&eacute;mon. The solo player receives a +1 boost to all stats to compensate &mdash; coordinate with your partner to win!`,
 		mod: 'gen9',
@@ -473,6 +498,21 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		ruleset: [
 			'Max Team Size = 3',
 			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod',
+		],
+	},
+	{
+		name: "[Gen 9] Mass FFA Random Battle",
+		desc: `Massive free-for-all for 5&ndash;100 players! Start a lobby with <code>/ffaopen</code>, have everyone join with <code>/ffajoin</code>, then launch with <code>/ffastart</code>. Everyone gets a random team &mdash; last trainer standing wins!`,
+		mod: 'gen9',
+		team: 'randomFFA',
+		gameType: 'freeforall',
+		playerCount: 8,
+		searchShow: false,
+		challengeShow: false,
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Sleep Clause Mod', 'Illusion Level Mod',
 		],
 	},
 
