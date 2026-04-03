@@ -1501,7 +1501,6 @@ export const commands: Chat.ChatCommands = {
 				return this.popupReply(this.tr`You are banned from battling and cannot challenge users.`);
 			}
 			const humanTeam = format.team ? '' : user.battleSettings?.team ?? '';
-			const botTeam = format.team ? '' : '';
 			const newRoom = Rooms.createBattle({
 				format: format.id,
 				rated: false,
@@ -1511,7 +1510,16 @@ export const commands: Chat.ChatCommands = {
 				] as any[],
 			} as any);
 			if (!newRoom?.battle) return this.popupReply(`Failed to create battle.`);
-			newRoom.battle.addBotPlayer(targetUsername, botTeam);
+			// Fill all remaining empty player slots with bots.
+			// For 2-player formats this adds 1 bot; for multi (4-player) this adds 3.
+			const difficulty = BattleBot.parseBotName(targetUsername)!;
+			const emptySlots = newRoom.battle.players.filter(
+				(p: any) => !p.id && !p.isBot && !p.hasTeam
+			);
+			for (let i = 0; i < emptySlots.length; i++) {
+				const botName = `Bot${difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}${i + 1}`;
+				newRoom.battle.addBotPlayer(botName);
+			}
 			return;
 		}
 		// ──────────────────────────────────────────────────────────────────
