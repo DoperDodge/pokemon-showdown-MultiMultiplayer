@@ -1491,6 +1491,28 @@ export const commands: Chat.ChatCommands = {
 	chall: 'challenge',
 	challenge(target, room, user, connection) {
 		const { targetUser, targetUsername, rest: formatName } = this.splitUser(target);
+
+		// ── Bot challenge shortcut ──────────────────────────────────────────
+		const BattleBot = require('../battle-bot') as typeof import('../battle-bot');
+		if (BattleBot.parseBotName(targetUsername)) {
+			const format = Dex.formats.get(formatName);
+			if (!format.exists) return this.popupReply(`Unknown format: ${formatName}`);
+			if (Punishments.isBattleBanned(user)) {
+				return this.popupReply(this.tr`You are banned from battling and cannot challenge users.`);
+			}
+			const newRoom = Rooms.createBattle({
+				format: format.id,
+				rated: false,
+				challengeType: 'challenge',
+				players: [{ user, name: user.name } as any],
+			} as any);
+			if (!newRoom?.battle) return this.popupReply(`Failed to create battle.`);
+			const team = format.team ? '' : user.battleSettings?.team ?? '';
+			newRoom.battle.addBotPlayer(targetUsername, team);
+			return;
+		}
+		// ──────────────────────────────────────────────────────────────────
+
 		if (!targetUser?.connected) {
 			return this.popupReply(this.tr`The user '${targetUsername}' was not found.`);
 		}

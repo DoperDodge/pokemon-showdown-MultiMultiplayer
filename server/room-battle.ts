@@ -20,6 +20,7 @@ import type { Tournament } from './tournaments/index';
 import type { RoomSettings } from './rooms';
 import type { BestOfGame } from './room-battle-bestof';
 import type { GameTimerSettings } from '../sim/dex-formats';
+import * as BattleBot from './battle-bot';
 
 type ChannelIndex = 0 | 1 | 2 | 3 | 4;
 export type PlayerIndex = 1 | 2 | 3 | 4;
@@ -114,6 +115,8 @@ export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 	 * in which case players will need to bring their own team.
 	 */
 	hasTeam: boolean;
+	isBot: boolean;
+	botDifficulty: BattleBot.BotDifficulty | null;
 	constructor(user: User | string | null, game: RoomBattle, num: PlayerIndex) {
 		super(user, game, num);
 		if (typeof user === 'string') user = null;
@@ -134,6 +137,8 @@ export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 		this.knownActive = true;
 		this.invite = '';
 		this.hasTeam = false;
+		this.isBot = false;
+		this.botDifficulty = null;
 
 		if (user) {
 			user.games.add(this.game.roomid);
@@ -528,6 +533,16 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	p2: RoomBattlePlayer = null!;
 	p3: RoomBattlePlayer = null!;
 	p4: RoomBattlePlayer = null!;
+	/** Look up a player by their slot string (p1, p2, … p100). */
+	playerBySlot(slot: string): RoomBattlePlayer | undefined {
+		return this.players.find(p => p.slot === slot);
+	}
+	/**
+	 * Tracks the most-recently-seen active species name for each slot,
+	 * so bot AI can make type-aware decisions about the opponent.
+	 * Key: slot ('p1', 'p2', …), value: species name (e.g. 'Charizard').
+	 */
+	botOpponentSpecies: Map<string, string> = new Map();
 	inviteOnlySetter: ID | null = null;
 	logData: AnyObject | null = null;
 	endType: 'forfeit' | 'forced' | 'normal' = 'normal';
@@ -773,6 +788,21 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 				if (line.startsWith('|turn|')) {
 					this.turn = parseInt(line.slice(6));
 				}
+				// Track opponent species for bot AI (|switch|, |drag|, |replace|)
+				if (line.startsWith('|switch|') || line.startsWith('|drag|') || line.startsWith('|replace|')) {
+					// Format: |switch|p2a: Charizard|Charizard, L100, M|281/281
+					const parts = line.split('|');
+					if (parts.length >= 4) {
+						const slotStr = parts[2]; // e.g. "p2a: Charizard"
+						const slotMatch = slotStr.match(/^(p\d+)/);
+						const detailsStr = parts[3]; // e.g. "Charizard, L100, M"
+						if (slotMatch && detailsStr) {
+							const slot = slotMatch[1];
+							const species = detailsStr.split(',')[0].trim();
+							this.botOpponentSpecies.set(slot, species);
+						}
+					}
+				}
 				this.room.add(line);
 				if (line.startsWith(`|bigerror|You will auto-tie if `) && Config.allowrequestingties && !this.room.tour) {
 					this.room.add(`|-hint|If you want to tie earlier, consider using \`/offertie\`.`);
@@ -804,8 +834,22 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 					choice: '',
 				};
 				this.requestCount++;
-				player?.sendRoom(`|request|${requestJSON}`);
-				if (!request.update) this.timer.nextRequest(player);
+				if (player?.isBot && player.botDifficulty) {
+					// Bot: respond automatically instead of forwarding to a user
+					if (!request.wait) {
+						// Find the slot of the opponent (any non-bot active slot)
+						const oppSlot = this.players
+							.find(p => p.slot !== slot && !p.isBot)?.slot ?? '';
+						const oppSpecies = this.botOpponentSpecies.get(oppSlot) ?? '';
+						BattleBot.respond(
+							this.stream, slot, requestJSON,
+							player.botDifficulty, oppSpecies,
+						);
+					}
+				} else {
+					player?.sendRoom(`|request|${requestJSON}`);
+					if (!request.update) this.timer.nextRequest(player);
+				}
 				break;
 			}
 			player?.sendRoom(lines[2]);
@@ -1075,6 +1119,27 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			this.room.auth.set(player.id, Users.PLAYER_SYMBOL);
 		}
 		if (user?.inRooms.has(this.roomid)) this.onConnect(user);
+		return player;
+	}
+
+	/**
+	 * Add an AI bot to an open player slot.
+	 * @param botName  Display name, e.g. "BotHard2"
+	 * @param team     Pre-built team string, or '' for random
+	 */
+	addBotPlayer(botName: string, team = '') {
+		const difficulty = BattleBot.parseBotName(botName);
+		if (!difficulty) throw new Error(`Invalid bot name: ${botName}`);
+		const player = super.addPlayer(botName);
+		if (!player) return null;
+		player.isBot = true;
+		player.botDifficulty = difficulty;
+		player.name = botName;
+		player.knownActive = true;
+		(this as any)[player.slot] = player;
+		const options = { name: botName, avatar: 'unknownf', team: team || undefined, rating: 0 };
+		void this.stream.write(`>player ${player.slot} ${JSON.stringify(options)}`);
+		player.hasTeam = true;
 		return player;
 	}
 
