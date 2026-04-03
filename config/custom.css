@@ -1,9 +1,13 @@
 /**
  * Custom CSS for Pokemon Showdown MultiMultiplayer
  *
- * Styles the colored Pokemon name highlights in the battle log
- * so they look like normal battle text instead of notice boxes.
+ * 1. Styles colored Pokemon name highlights in the battle log
+ *    so they look like normal battle text instead of notice boxes.
+ * 2. Adds a visual accent to the user's side Pokemon stat bars
+ *    on the battle field.
  */
+
+/* ── Battle Log: colored Pokemon messages ── */
 
 /* Remove notice-box styling from our colored Pokemon messages */
 .battle-log .notice:has(.pokemon-highlight) {
@@ -16,4 +20,15 @@
 /* Match the font styling of normal battle-history text */
 .pokemon-highlight {
 	font-size: 9pt;
+}
+
+/* ── Battle Field: accent the user's side stat bar names ── */
+
+/* The user's Pokemon are always rendered in .lstatbar (left/bottom side).
+   Give their names a subtle colored glow to distinguish from opponents. */
+.lstatbar strong {
+	text-shadow:
+		0 0 6px rgba(100, 160, 255, 0.9),
+		0 1px 0 #000, 0 -1px 0 #000,
+		1px 0 0 #000, -1px 0 0 #000 !important;
 }

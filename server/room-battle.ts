@@ -160,8 +160,8 @@ function buildColorSplits(
 	players: RoomBattlePlayer[],
 	playerNames: Map<string, string>,
 ): { silentLine: string; splits: string[] } | null {
-	// Skip lines that are already silent or that we don't colorize
-	if (hasKwarg(line, 'silent') || hasKwarg(line, 'still')) return null;
+	// Skip lines that are already silent
+	if (hasKwarg(line, 'silent')) return null;
 
 	// Check if any player colorization produces non-null output
 	const firstPlayer = players[0];
