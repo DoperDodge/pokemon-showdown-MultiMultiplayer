@@ -678,7 +678,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return false;
 		}
 
-		const validSlots = this.players.filter(player => !player.id).map(player => player.slot);
+		const validSlots = this.players.filter(player => !player.id && !player.isBot).map(player => player.slot);
 
 		if (slot && !validSlots.includes(slot)) {
 			user.popup(`This battle already has a user in slot ${slot}.`);
@@ -1131,15 +1131,22 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	 * Add an AI bot to an open player slot.
 	 * @param botName  Display name, e.g. "BotHard2"
 	 * @param team     Pre-built team string, or '' for random
+	 * @param targetSlot  Specific slot to place the bot in (e.g. 'p2')
 	 */
-	addBotPlayer(botName: string, team = '') {
+	addBotPlayer(botName: string, team = '', targetSlot?: SideID) {
 		const difficulty = BattleBot.parseBotName(botName);
 		if (!difficulty) throw new Error(`Invalid bot name: ${botName}`);
 
 		// Reuse an existing empty player slot (created by the constructor when
 		// fewer players were provided than playerCap) instead of creating a new
 		// slot that the battle engine doesn't expect.
-		let player = this.players.find(p => !p.id && !p.isBot && !p.hasTeam);
+		let player: RoomBattlePlayer | undefined | null;
+		if (targetSlot) {
+			player = this.playerBySlot(targetSlot);
+			if (!player || player.id || player.isBot || player.hasTeam) return null;
+		} else {
+			player = this.players.find(p => !p.id && !p.isBot && !p.hasTeam);
+		}
 		if (player) {
 			player.name = botName;
 		} else {
@@ -1300,7 +1307,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	}
 
 	invitesFull() {
-		return this.players.every(player => player.id || player.invite);
+		return this.players.every(player => player.id || player.invite || player.isBot);
 	}
 	/** true = send to every player; falsy = send to no one */
 	sendInviteForm(connection: Connection | User | null | boolean) {
@@ -1311,8 +1318,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		if (!connection) return;
 
 		const playerForms = this.players.map(player => (
-			player.id ? (
-				`<form><label>Player ${player.num}: <strong>${player.name}</strong></label></form>`
+			player.id || player.isBot ? (
+				`<form><label>Player ${player.num}: <strong>${player.name}</strong>${player.isBot ? ' (Bot)' : ''}</label></form>`
 			) : player.invite ? (
 				`<form data-submitsend="/msgroom ${this.roomid},/uninvitebattle ${player.invite}"><label>Player ${player.num}: <strong>${player.invite}</strong> (invited) <button type="submit">Uninvite</button></label></form>`
 			) : (
