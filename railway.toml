@@ -8,12 +8,15 @@
 # but our repo ships config/config.js directly so that step is a no-op.
 builder = "nixpacks"
 buildCommand = "npm ci --cache /tmp/.npm && node build"
+<<<<<<< HEAD
 
 # Pin Node.js 22 — required by the server (uses fetch, which landed in Node 18
 # but the codebase targets 22 LTS for stability).
 # This sets the NIXPACKS_NODE_VERSION env var that Nixpacks reads.
 [build.nixpacks]
 nodeVersion = "22"
+=======
+>>>>>>> bfc35a9 (Fix npm EBUSY error on Railway by redirecting npm cache)
 
 # Pin Node.js 22 — required by the server (uses fetch, which landed in Node 18
 # but the codebase targets 22 LTS for stability).
