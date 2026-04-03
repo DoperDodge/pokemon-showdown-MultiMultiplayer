@@ -1283,6 +1283,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		const delayStart = this.options.delayedStart || !!this.options.inputLog;
 		const users = this.players.map(player => {
+			if (player.isBot) return null; // bots don't have real User objects
 			const user = player.getUser();
 			if (!user && !delayStart) {
 				throw new Error(`User ${player.id} not found on ${this.roomid} battle creation`);
@@ -1290,7 +1291,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return user;
 		});
 		if (!delayStart) {
-			Rooms.global.onCreateBattleRoom(users as User[], this.room, { rated: this.rated });
+			const realUsers = users.filter((u): u is User => u !== null);
+			Rooms.global.onCreateBattleRoom(realUsers, this.room, { rated: this.rated });
 			this.started = true;
 		} else if (delayStart === 'multi') {
 			this.room.add(`|uhtml|invites|<div class="broadcast broadcast-blue"><strong>This is a 4-player challenge battle</strong><br />The players will need to add more players before the battle can start.</div>`);
