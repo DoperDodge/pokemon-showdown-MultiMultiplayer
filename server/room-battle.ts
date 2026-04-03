@@ -76,6 +76,14 @@ function usernameColor(name: string): string {
 	return `hsl(${H},${S}%,${L}%)`;
 }
 
+/** Compute the hue bucket (0-350, step 10) for a username — used for CSS class injection */
+function usernameHueBucket(name: string): number {
+	const id = toID(name);
+	const hash = crypto.createHash('md5').update(id).digest('hex');
+	const H = parseInt(hash.substr(4, 4), 16) % 360;
+	return Math.round(H / 10) * 10 % 360;
+}
+
 /** Extract Pokémon nickname from a protocol reference like "p1a: Pikachu" */
 function pokemonName(ref: string): string {
 	const idx = ref.indexOf(': ');
@@ -1242,6 +1250,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			player.active = true;
 			this.timer.checkActivity();
 			this.room.add(`|player|${player.slot}|${user.name}|${user.avatar}|`);
+			// Inject a hidden color marker so CSS :has() can color the stat bar
+			const hueBucket = usernameHueBucket(user.name);
+			this.room.add(`|split|${player.slot}`);
+			this.room.add(`|raw|<div class="uhue uhue-${hueBucket}" style="display:none"></div>`);
+			this.room.add('');
 			Chat.runHandlers('onBattleJoin', player.slot, user, this);
 		}
 	}
@@ -1443,6 +1456,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			if (playerOpts) player.hasTeam = true;
 
 			this.room.add(`|player|${slot}|${player.name}|${user.avatar}|`);
+			// Inject a hidden color marker so CSS :has() can color the stat bar
+			const hueBucket = usernameHueBucket(player.name);
+			this.room.add(`|split|${slot}`);
+			this.room.add(`|raw|<div class="uhue uhue-${hueBucket}" style="display:none"></div>`);
+			this.room.add('');
 			Chat.runHandlers('onBattleJoin', slot as string, user, this);
 		} else {
 			player.active = false;
