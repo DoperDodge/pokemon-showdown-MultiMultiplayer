@@ -413,7 +413,7 @@ export class Format extends BasicEffect implements Readonly<BasicEffect> {
 	/** Game type. */
 	readonly gameType: GameType;
 	/** Number of players, based on game type, for convenience */
-	readonly playerCount: 2 | 4;
+	readonly playerCount: 2 | 3 | 4;
 	/** List of rule names. */
 	readonly ruleset: string[];
 	/**
@@ -506,7 +506,9 @@ export class Format extends BasicEffect implements Readonly<BasicEffect> {
 		this.ruleTable = null;
 		this.onBegin = data.onBegin || undefined;
 		this.noLog = !!data.noLog;
-		this.playerCount = (this.gameType === 'multi' || this.gameType === 'freeforall' ? 4 : 2);
+		this.playerCount = (data as any).playerCount ||
+			(this.gameType === 'multi' || this.gameType === 'freeforall' ? 4 :
+			 this.gameType === '2v1' ? 3 : 2);
 		assignMissingFields(this, data);
 	}
 }

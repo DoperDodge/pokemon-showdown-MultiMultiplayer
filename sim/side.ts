@@ -385,9 +385,17 @@ export class Side {
 		return this.foe.allies(all);
 	}
 	activeTeam() {
-		if (this.battle.gameType !== 'multi') return this.active;
-
-		return this.battle.sides[this.n % 2].active.concat(this.battle.sides[this.n % 2 + 2].active);
+		if (this.battle.gameType === 'multi') {
+			return this.battle.sides[this.n % 2].active.concat(this.battle.sides[this.n % 2 + 2].active);
+		}
+		if (this.battle.gameType === '2v1' && this.allySide) {
+			// team players (sides[0] and sides[2], both n%2===0) share their activeTeam
+			// the solo player (sides[1], n%2===1) has no allySide so falls through to default
+			const first = this.n < this.allySide.n ? this : this.allySide;
+			const second = this.n < this.allySide.n ? this.allySide : this;
+			return first.active.concat(second.active);
+		}
+		return this.active;
 	}
 	hasAlly(pokemon: Pokemon) {
 		return pokemon.side === this || pokemon.side === this.allySide;

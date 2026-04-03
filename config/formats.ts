@@ -390,6 +390,41 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		],
 	},
 
+	// 2v1 Battle
+	///////////////////////////////////////////////////////////////////
+
+	{
+		section: "2v1 Battle",
+		column: 1,
+	},
+	{
+		name: "[Gen 9] 2v1 Battle",
+		desc: `Two players team up to challenge a single opponent. The solo player receives a +1 boost to all stats to compensate for the disadvantage. Coordinate with your partner to take down the powered-up solo fighter!`,
+		mod: 'gen9',
+		gameType: '2v1',
+		searchShow: false,
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Standard', 'Evasion Abilities Clause', 'Sleep Moves Clause', '!Sleep Clause Mod',
+		],
+		banlist: [
+			'Uber', 'AG', 'Arena Trap', 'Moody', 'Shadow Tag', 'King\'s Rock', 'Razor Fang', 'Baton Pass', 'Last Respects', 'Shed Tail',
+		],
+	},
+	{
+		name: "[Gen 9] 2v1 Anything Goes",
+		desc: `Two players challenge a single opponent with no restrictions. The solo player receives a +1 boost to all stats. No bans &mdash; bring your strongest team!`,
+		mod: 'gen9',
+		gameType: '2v1',
+		searchShow: false,
+		rated: false,
+		ruleset: [
+			'Max Team Size = 3',
+			'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod',
+		],
+	},
+
 	// 2v2 Team Battle (Multi)
 	///////////////////////////////////////////////////////////////////
 

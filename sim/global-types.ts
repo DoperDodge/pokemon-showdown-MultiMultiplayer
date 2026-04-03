@@ -140,7 +140,7 @@ type Format = import('./dex-formats').Format;
 
 type Nature = import('./dex-data').Nature;
 
-type GameType = 'singles' | 'doubles' | 'triples' | 'rotation' | 'multi' | 'freeforall';
+type GameType = 'singles' | 'doubles' | 'triples' | 'rotation' | 'multi' | 'freeforall' | '2v1';
 type SideID = 'p1' | 'p2' | 'p3' | 'p4';
 
 type SpreadMoveTargets = (Pokemon | false | null)[];
