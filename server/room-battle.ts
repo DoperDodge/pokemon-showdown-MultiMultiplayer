@@ -1135,11 +1135,20 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	addBotPlayer(botName: string, team = '') {
 		const difficulty = BattleBot.parseBotName(botName);
 		if (!difficulty) throw new Error(`Invalid bot name: ${botName}`);
-		const player = super.addPlayer(botName);
-		if (!player) return null;
+
+		// Reuse an existing empty player slot (created by the constructor when
+		// fewer players were provided than playerCap) instead of creating a new
+		// slot that the battle engine doesn't expect.
+		let player = this.players.find(p => !p.id && !p.isBot && !p.hasTeam);
+		if (player) {
+			player.name = botName;
+		} else {
+			player = super.addPlayer(botName);
+			if (!player) return null;
+		}
+
 		player.isBot = true;
 		player.botDifficulty = difficulty;
-		player.name = botName;
 		player.knownActive = true;
 		(this as any)[player.slot] = player;
 		const options = { name: botName, avatar: 'unknownf', team: team || undefined, rating: 0 };

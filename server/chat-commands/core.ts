@@ -1500,15 +1500,18 @@ export const commands: Chat.ChatCommands = {
 			if (Punishments.isBattleBanned(user)) {
 				return this.popupReply(this.tr`You are banned from battling and cannot challenge users.`);
 			}
+			const humanTeam = format.team ? '' : user.battleSettings?.team ?? '';
+			const botTeam = format.team ? '' : '';
 			const newRoom = Rooms.createBattle({
 				format: format.id,
 				rated: false,
 				challengeType: 'challenge',
-				players: [{ user, name: user.name } as any],
+				players: [
+					{ user, team: humanTeam },
+				] as any[],
 			} as any);
 			if (!newRoom?.battle) return this.popupReply(`Failed to create battle.`);
-			const team = format.team ? '' : user.battleSettings?.team ?? '';
-			newRoom.battle.addBotPlayer(targetUsername, team);
+			newRoom.battle.addBotPlayer(targetUsername, botTeam);
 			return;
 		}
 		// ──────────────────────────────────────────────────────────────────
