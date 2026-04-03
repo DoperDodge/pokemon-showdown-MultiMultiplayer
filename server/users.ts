@@ -798,9 +798,12 @@ export class User extends Chat.MessageContext {
 			// unregistered users can only merge in limited situations
 			let canMerge = registered && conflictUser.registered;
 			if (
-				!registered && !conflictUser.registered && conflictUser.latestIp === this.latestIp &&
-				!conflictUser.connected
+				!registered && !conflictUser.registered && conflictUser.latestIp === this.latestIp
 			) {
+				// Allow same-IP unregistered reconnects even if the old connection still
+				// appears live. Reverse proxies (e.g. Railway) delay WebSocket disconnect
+				// notifications, so the old session can look connected when the same user
+				// refreshes. On a private server, same name + same IP = same person.
 				canMerge = true;
 			}
 			if (!canMerge) {
