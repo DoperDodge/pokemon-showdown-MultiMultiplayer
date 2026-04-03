@@ -30,7 +30,7 @@ export type ChannelID = 0 | 1 | 2 | 3 | 4;
 
 export type ChannelMessages<T extends ChannelID | -1> = Record<T, string[]>;
 
-const splitRegex = /^\|split\|p([1234])\n(.*)\n(.*)|.+/gm;
+const splitRegex = /^\|split\|p([01234])\n(.*)\n(.*)|.+/gm;
 
 export function extractChannelMessages<T extends ChannelID | -1>(message: string, channelIds: T[]): ChannelMessages<T> {
 	const channelIdSet = new Set(channelIds);
@@ -44,10 +44,10 @@ export function extractChannelMessages<T extends ChannelID | -1>(message: string
 	};
 
 	for (const [lineMatch, playerMatch, secretMessage, sharedMessage] of message.matchAll(splitRegex)) {
-		const player = playerMatch ? parseInt(playerMatch) : 0;
+		const player = playerMatch !== undefined ? parseInt(playerMatch) : -2;
 		for (const channelId of channelIdSet) {
 			let line = lineMatch;
-			if (player) {
+			if (player >= 0) {
 				line = channelId === -1 || player === channelId ? secretMessage : sharedMessage;
 				if (!line) continue;
 			}
