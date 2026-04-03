@@ -1129,22 +1129,45 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 
 	/**
 	 * Add an AI bot to an open player slot.
-	 * @param botName  Display name, e.g. "BotHard2"
-	 * @param team     Pre-built team string, or '' for random
+	 * @param botName   Display name, e.g. "BotHard2"
+	 * @param team      Pre-built team string, or '' for random
+	 * @param targetSlot  Specific slot to fill (e.g. 'p3'), or omitted for first empty slot
 	 */
-	addBotPlayer(botName: string, team = '') {
+	addBotPlayer(botName: string, team = '', targetSlot?: SideID) {
 		const difficulty = BattleBot.parseBotName(botName);
 		if (!difficulty) throw new Error(`Invalid bot name: ${botName}`);
-		const player = super.addPlayer(botName);
+
+		// Find an existing empty slot to convert — never create a new player
+		let player: RoomBattlePlayer | undefined;
+		if (targetSlot) {
+			player = this.playerBySlot(targetSlot);
+			if (!player || player.id || player.isBot) return null;
+		} else {
+			player = this.players.find(p => !p.id && !p.invite && !p.isBot);
+		}
 		if (!player) return null;
+
+		// Mark the slot as a bot
 		player.isBot = true;
 		player.botDifficulty = difficulty;
 		player.name = botName;
+		(player.id as string) = toID(botName);
 		player.knownActive = true;
-		(this as any)[player.slot] = player;
+		player.hasTeam = true;
+
+		// Inform the simulator
 		const options = { name: botName, avatar: 'unknownf', team: team || undefined, rating: 0 };
 		void this.stream.write(`>player ${player.slot} ${JSON.stringify(options)}`);
-		player.hasTeam = true;
+
+		// If every slot is now filled, start the battle
+		if (!this.started && this.players.every(p => p.id)) {
+			const users = this.players.filter(p => !p.isBot).map(p => p.getUser()).filter(Boolean) as User[];
+			Rooms.global.onCreateBattleRoom(users, this.room, { rated: this.rated });
+			this.started = true;
+			this.room.add(`|uhtmlchange|invites|`);
+			this.room.update();
+		}
+
 		return player;
 	}
 

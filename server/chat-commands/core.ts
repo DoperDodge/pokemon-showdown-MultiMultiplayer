@@ -1187,6 +1187,22 @@ export const commands: Chat.ChatCommands = {
 		if (!player) {
 			throw new Chat.ErrorMessage(`This battle does not support having players in ${slot}`);
 		}
+		// Allow adding AI bots by name (e.g. BotEasy1, BotHard2)
+		const BattleBot = require('../battle-bot') as typeof import('../battle-bot');
+		if (BattleBot.parseBotName(name)) {
+			if (player.id || player.isBot) {
+				battle.sendInviteForm(connection);
+				throw new Chat.ErrorMessage(this.tr`This room already has a player in slot ${slot}.`);
+			}
+			const botPlayer = battle.addBotPlayer(name, '', slot as SideID);
+			if (!botPlayer) {
+				battle.sendInviteForm(connection);
+				throw new Chat.ErrorMessage(`Failed to add bot ${name} to slot ${slot}.`);
+			}
+			battle.sendInviteForm(battle.invitesFull() ? true : connection);
+			return this.add(`||Bot ${name} added as ${slot}!`);
+		}
+
 		if (!targetUser) {
 			battle.sendInviteForm(connection);
 			throw new Chat.ErrorMessage(this.tr`User ${name} not found.`);
@@ -1504,6 +1520,7 @@ export const commands: Chat.ChatCommands = {
 				format: format.id,
 				rated: false,
 				challengeType: 'challenge',
+				delayedStart: true,
 				players: [{ user, name: user.name } as any],
 			} as any);
 			if (!newRoom?.battle) return this.popupReply(`Failed to create battle.`);
