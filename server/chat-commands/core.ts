@@ -1167,6 +1167,18 @@ export const commands: Chat.ChatCommands = {
 	},
 	hidereplayhelp: [`/hidereplay - Hides the replay of the current battle. Requires: ${Users.PLAYER_SYMBOL} ~`],
 
+	ffastartbattle(target, room, user) {
+		room = this.requireRoom();
+		if (!room.battle) throw new Chat.ErrorMessage(this.tr`You can only do this in battle rooms.`);
+		if (room.rated) throw new Chat.ErrorMessage(this.tr`You can only start unrated battles this way.`);
+		this.checkCan('joinbattle', null, room);
+		try {
+			room.battle.startFFA();
+		} catch (err: any) {
+			throw new Chat.ErrorMessage(err.message);
+		}
+	},
+
 	addplayer: 'invitebattle',
 	invitebattle(target, room, user, connection) {
 		room = this.requireRoom();

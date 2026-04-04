@@ -1073,6 +1073,13 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 
 				trackLine(line);
 
+				// The official PS client only handles |player|p1|–|player|p4|.
+				// Suppress |player|pN| for N > 4 to avoid client-side JS errors.
+				if (/^\|player\|p([5-9]\d*|\d{2,})\|/.test(line)) {
+					i++;
+					continue;
+				}
+
 				// Try to colorize non-split lines (e.g. |move|, |faint|)
 				const colorResult = buildColorSplits(line, this.players, playerNames);
 				if (colorResult) {
@@ -1608,8 +1615,54 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	}
 
 	invitesFull() {
+		// For FFA, "full enough" means >= 4 filled — triggers a broadcast of the invite
+		// form so the "Start FFA" button becomes visible to all players.
+		if (this.gameType === 'freeforall') {
+			return this.players.filter(p => p.id || p.invite || p.isBot).length >= 4;
+		}
 		return this.players.every(player => player.id || player.invite || player.isBot);
 	}
+
+	/**
+	 * Force-start a FFA battle with only the currently-filled player slots.
+	 * Trims empty slots and fires up the sim with the actual player count.
+	 */
+	startFFA() {
+		if (this.started) throw new Error('Battle already started');
+		if (this.gameType !== 'freeforall') throw new Error('Not a FFA battle');
+
+		const filledPlayers = this.players.filter(p => p.id || p.isBot || p.hasTeam);
+		if (filledPlayers.length < 4) {
+			throw new Error(`Need at least 4 players to start (have ${filledPlayers.length})`);
+		}
+
+		// Remove empty player slots
+		const emptyPlayers = this.players.filter(p => !p.id && !p.isBot && !p.hasTeam);
+		for (const p of emptyPlayers) {
+			const idx = this.players.indexOf(p);
+			if (idx >= 0) this.players.splice(idx, 1);
+			delete (this as any)[p.slot];
+		}
+		this.playerCap = filledPlayers.length;
+
+		// Tell the sim to discard the unfilled sides and start.
+		// Note: in >eval, the battle object is available as `battle`, not `this`.
+		const n = filledPlayers.length;
+		void this.stream.write(
+			`>eval ` +
+			`battle.sides = battle.sides.slice(0, ${n}); ` +
+			`for (let i = 0; i < battle.sides.length; i++) { battle.sides[i].n = i; battle.sides[i].id = 'p' + (i + 1); } ` +
+			`battle.activePerHalf = Math.ceil(${n} / 2); ` +
+			`if (!battle.started) battle.start();`
+		);
+
+		// Server-side bookkeeping (mirrors what addplayer does when all slots filled)
+		const users = filledPlayers.map(p => p.getUser()).filter(Boolean) as User[];
+		Rooms.global.onCreateBattleRoom(users, this.room, { rated: this.rated });
+		this.started = true;
+		this.room.add(`|uhtmlchange|invites|`).update();
+	}
+
 	/** true = send to every player; falsy = send to no one */
 	sendInviteForm(connection: Connection | User | null | boolean) {
 		if (connection === true) {
@@ -1631,9 +1684,13 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			[playerForms[1], playerForms[2]] = [playerForms[2], playerForms[1]];
 			playerForms.splice(2, 0, '&mdash; vs &mdash;');
 		}
+		const filledCount = this.players.filter(p => p.id || p.isBot || p.hasTeam).length;
+		const startButton = (this.gameType === 'freeforall' && filledCount >= 4)
+			? `<br /><form data-submitsend="/msgroom ${this.roomid},/ffastartbattle"><button class="button" type="submit">Start FFA (${filledCount} players)</button></form>`
+			: '';
 		connection.sendTo(
 			this.room,
-			`|uhtmlchange|invites|<div class="broadcast broadcast-blue"><strong>This battle needs more players to start</strong><br /><br />${playerForms.join(``)}</div>`
+			`|uhtmlchange|invites|<div class="broadcast broadcast-blue"><strong>This battle needs more players to start</strong><br /><br />${playerForms.join(``)}${startButton}</div>`
 		);
 	}
 
