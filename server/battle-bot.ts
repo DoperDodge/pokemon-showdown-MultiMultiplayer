@@ -226,6 +226,49 @@ function getWeatherBoost(moveType: string, ability: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// Game State Tracking (Extreme difficulty)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-battle game state tracked across turns for Extreme difficulty.
+ * This enables prediction-based play instead of purely reactive play.
+ */
+interface BotGameState {
+	/** All opponent species revealed so far. */
+	oppRevealedTeam: string[];
+	/** Current turn number. */
+	turn: number;
+	/** Last move the bot used (to avoid repetition). */
+	lastMoveUsed: string;
+	/** Count of consecutive times the same move was used. */
+	sameMoveTurns: number;
+	/** Whether the opponent switched last turn (predictive signal). */
+	oppSwitchedLastTurn: boolean;
+	/** The opponent's active species last turn. */
+	lastOppSpecies: string;
+}
+
+/** Per-slot game state storage — persists across turns within a battle. */
+const gameStates: Map<string, BotGameState> = new Map();
+
+/** Get or create game state for a battle slot. */
+function getGameState(slot: string): BotGameState {
+	let state = gameStates.get(slot);
+	if (!state) {
+		state = {
+			oppRevealedTeam: [],
+			turn: 0,
+			lastMoveUsed: '',
+			sameMoveTurns: 0,
+			oppSwitchedLastTurn: false,
+			lastOppSpecies: '',
+		};
+		gameStates.set(slot, state);
+	}
+	return state;
+}
+
+// ---------------------------------------------------------------------------
 // Core AI
 // ---------------------------------------------------------------------------
 
@@ -237,6 +280,10 @@ export function respond(
 	difficulty: BotDifficulty,
 	/** Species name of the current opposing active Pokemon (may be empty). */
 	opponentSpecies: string,
+	/** All opponent species revealed so far (Extreme only). */
+	oppRevealedTeam: string[] = [],
+	/** Current turn number. */
+	turnCount = 0,
 ): void {
 	let request: BattleRequest;
 	try {
@@ -248,7 +295,39 @@ export function respond(
 
 	if (request.wait) return; // nothing to do
 
-	const choice = computeChoice(request, difficulty, opponentSpecies);
+	// Update game state for Extreme difficulty
+	if (difficulty === 'extreme') {
+		const state = getGameState(slot);
+		// Detect opponent switch
+		if (opponentSpecies && opponentSpecies !== state.lastOppSpecies && state.lastOppSpecies) {
+			state.oppSwitchedLastTurn = true;
+		} else {
+			state.oppSwitchedLastTurn = false;
+		}
+		state.lastOppSpecies = opponentSpecies;
+		state.turn = turnCount;
+		state.oppRevealedTeam = oppRevealedTeam;
+	}
+
+	const choice = computeChoice(request, difficulty, opponentSpecies, slot);
+
+	// Track what move the bot chose (for anti-repetition)
+	if (difficulty === 'extreme') {
+		const state = getGameState(slot);
+		const moveMatch = choice.match(/^move (\d+)/);
+		if (moveMatch) {
+			const moveIdx = parseInt(moveMatch[1]) - 1;
+			const active = request.active?.[0];
+			const moveId = active?.moves[moveIdx]?.id ?? '';
+			if (moveId === state.lastMoveUsed) {
+				state.sameMoveTurns++;
+			} else {
+				state.sameMoveTurns = 1;
+			}
+			state.lastMoveUsed = moveId;
+		}
+	}
+
 	// Small artificial delay so the bot doesn't look instant
 	const delayMs = difficulty === 'easy' ? 600 : difficulty === 'medium' ? 800 :
 		difficulty === 'hard' ? 1100 : 1400;
@@ -259,15 +338,16 @@ function computeChoice(
 	req: BattleRequest,
 	diff: BotDifficulty,
 	oppSpecies: string,
+	slot = '',
 ): string {
 	// --- Force-switch ---
 	if (req.forceSwitch) {
-		return pickSwitch(req, diff, oppSpecies);
+		return pickSwitch(req, diff, oppSpecies, slot);
 	}
 
 	// --- Move request ---
 	if (req.active?.length) {
-		return pickMove(req, diff, oppSpecies);
+		return pickMove(req, diff, oppSpecies, slot);
 	}
 
 	return 'default';
@@ -277,7 +357,7 @@ function computeChoice(
 // Move selection
 // ---------------------------------------------------------------------------
 
-function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string): string {
+function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, slot = ''): string {
 	const active = req.active![0];
 	const available = active.moves
 		.map((m, i) => ({ ...m, idx: i + 1 }))
@@ -664,75 +744,311 @@ function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string): 
 
 	scored.sort((a, b) => b.score - a.score);
 
+	// ── Extreme: Pro-level decision tree ──
+	// Instead of just picking the highest score, apply layered strategic logic.
+	if (diff === 'extreme') {
+		return extremeDecisionTree(
+			req, active, scored, activePokemon, selfTypes, selfHp,
+			oppTypes, oppBaseStats, oppAbilities, oppSpecies, slot,
+		);
+	}
+
 	// Hard: sometimes (15%) pick the 2nd-best move to be less predictable
-	// Extreme: very rarely (5%) to maintain near-optimal play but avoid being 100% predictable
 	let pick;
-	if (diff === 'extreme' && scored.length > 1 && Math.random() < 0.05) {
-		pick = scored[1];
-	} else if (diff === 'hard' && scored.length > 1 && Math.random() < 0.15) {
+	if (diff === 'hard' && scored.length > 1 && Math.random() < 0.15) {
 		pick = scored[1];
 	} else {
 		pick = scored[0];
 	}
 
 	// Consider switching if heavily disadvantaged
-	// Extreme: proactively switch when at a type disadvantage (50% chance)
-	const switchThreshold = diff === 'extreme' ? 0.50 : diff === 'hard' ? 0.25 : 0.10;
-	const switchScoreThreshold = diff === 'extreme' ? 10 : 5;
+	const switchThreshold = diff === 'hard' ? 0.25 : 0.10;
 	if (diff !== 'easy' && !active.trapped && !active.maybeTrapped &&
-		pick.score < switchScoreThreshold && Math.random() < switchThreshold) {
-		const sw = pickSwitch(req, diff, oppSpecies);
+		pick.score < 5 && Math.random() < switchThreshold) {
+		const sw = pickSwitch(req, diff, oppSpecies, slot);
 		if (sw !== 'default') return sw;
 	}
 
-	// Extreme: pro-level switch-out evaluation
-	if (diff === 'extreme' && !active.trapped && !active.maybeTrapped && oppTypes.length) {
+	return `move ${pick.m.idx}`;
+}
+
+/**
+ * Extreme: Pro-level decision tree.
+ *
+ * A pro player doesn't just pick the highest-damage move every turn.
+ * They think in layers:
+ *   1. Can I KO? → Use the KO move
+ *   2. Am I about to die? → Switch, use priority, or sac smartly
+ *   3. Will the opponent switch? → Predict and use coverage / set up
+ *   4. Is this a good setup opportunity? → Boost
+ *   5. Should I pivot for momentum? → U-turn/Volt Switch
+ *   6. Apply pressure with the best move (but vary to avoid predictability)
+ */
+function extremeDecisionTree(
+	req: BattleRequest,
+	active: ActiveRequest,
+	scored: { m: { idx: number; id: string; pp: number }; score: number }[],
+	activePokemon: SidePokemon,
+	selfTypes: string[],
+	selfHp: number,
+	oppTypes: string[],
+	oppBaseStats: { hp: number; atk: number; def: number; spa: number; spd: number; spe: number } | null,
+	oppAbilities: string[],
+	oppSpecies: string,
+	slot: string,
+): string {
+	const state = getGameState(slot);
+	const selfStats = activePokemon?.stats;
+	const selfAbility = toID(activePokemon?.ability ?? '');
+	const selfItem = toID(activePokemon?.item ?? '');
+	const aliveCount = countAlive(req.side.pokemon);
+
+	// Categorize moves by role for strategic selection
+	const attackMoves = scored.filter(s => Dex.moves.get(s.m.id).basePower > 0 && s.score > -900);
+	const statusMoves = scored.filter(s => Dex.moves.get(s.m.id).basePower === 0 && s.score > -900);
+	const pivotMoves = scored.filter(s => ['uturn', 'voltswitch', 'flipturn', 'partingshot', 'teleport'].includes(s.m.id));
+	const setupMoves = scored.filter(s => {
+		const id = s.m.id;
+		return ['swordsdance', 'nastyplot', 'calmmind', 'dragondance', 'quiverdance',
+			'shellsmash', 'shiftgear', 'coil', 'bulkup', 'agility', 'autotomize',
+			'bellydrum', 'tailglow', 'growth', 'workup', 'honeclaws', 'rockpolish',
+			'cottonguard', 'irondefense', 'curse'].includes(id);
+	});
+	const priorityMoves = attackMoves.filter(s => (Dex.moves.get(s.m.id).priority ?? 0) > 0);
+
+	const bestAttack = attackMoves[0];
+	const bestOverall = scored[0];
+	const canSwitch = !active.trapped && !active.maybeTrapped;
+
+	// ── LAYER 1: Can we KO? ──
+	// If our best move likely KOs, just use it (no fancy play needed)
+	if (bestAttack && oppBaseStats && selfStats) {
+		const dexMove = Dex.moves.get(bestAttack.m.id);
+		const koPct = estimateKOPercent(
+			dexMove.basePower, dexMove.category as 'Physical' | 'Special',
+			dexMove.type, selfTypes, selfStats,
+			selfAbility, selfItem, oppTypes, oppBaseStats,
+		);
+		if (koPct >= 85) {
+			// Likely KO — just click the move, no need to get fancy
+			return applyMechanic(req, active, bestAttack, activePokemon, selfTypes, selfHp,
+				oppTypes, oppBaseStats, oppAbilities);
+		}
+	}
+
+	// ── LAYER 2: Am I about to die? ──
+	// If we're at very low HP, use priority to get chip, or switch if we can't do anything
+	if (selfHp < 20) {
+		// Use priority if we have it and it does meaningful damage
+		if (priorityMoves.length > 0 && priorityMoves[0].score > 5) {
+			return applyMechanic(req, active, priorityMoves[0], activePokemon, selfTypes, selfHp,
+				oppTypes, oppBaseStats, oppAbilities);
+		}
+		// Use our strongest move (go down fighting)
+		if (bestAttack && bestAttack.score > 3) {
+			return `move ${bestAttack.m.idx}`;
+		}
+		// If we truly can't do anything, switch to save momentum
+		if (canSwitch) {
+			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
+			if (sw !== 'default') return sw;
+		}
+	}
+
+	// ── LAYER 3: Should we switch out? ──
+	// Check for type domination — pro players don't stay in bad matchups
+	if (canSwitch && oppTypes.length) {
 		let dominated = false;
 		let severeDomination = false;
 		for (const oppType of oppTypes) {
 			const eff = effectiveness(oppType, selfTypes);
 			if (eff > 1) dominated = true;
-			if (eff >= 2) severeDomination = true; // 4x weakness
+			if (eff >= 2) severeDomination = true;
 		}
 
-		// Severe domination (4x weakness): almost always switch
+		// 4x weakness: almost always switch (unless we can KO or use priority)
 		if (severeDomination && selfHp > 15) {
-			const sw = pickSwitch(req, diff, oppSpecies);
+			// Check if we have a priority move that kills
+			if (priorityMoves.length > 0 && priorityMoves[0].score > 20) {
+				// Priority might finish them off — stay in
+			} else {
+				const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
+				if (sw !== 'default') return sw;
+			}
+		}
+
+		// Regular weakness + can't threaten back = switch
+		if (dominated && bestOverall.score < 20 && selfHp > 30) {
+			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
 			if (sw !== 'default') return sw;
 		}
 
-		// Regular domination: switch if our best move isn't threatening enough
-		if (dominated && pick.score < 25 && selfHp > 30 && Math.random() < 0.70) {
-			const sw = pickSwitch(req, diff, oppSpecies);
+		// We can't do anything useful at all — switch
+		if (bestOverall.score < 8 && selfHp > 40) {
+			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
 			if (sw !== 'default') return sw;
 		}
 
-		// Even without type disadvantage, switch if we can't do anything useful
-		if (pick.score < 8 && selfHp > 40) {
-			const sw = pickSwitch(req, diff, oppSpecies);
-			if (sw !== 'default') return sw;
-		}
-
-		// Don't stay in with a wall if opponent has a setup move user in
-		// (indicated by low offensive stats but high speed — likely a sweeper)
-		if (oppBaseStats && oppBaseStats.spe > 100 && pick.score < 15 && selfHp > 50) {
-			const selfStats = activePokemon?.stats;
-			const isDefensive = selfStats && selfStats.atk < 80 && selfStats.spa < 80;
-			if (isDefensive) {
-				// We're a defensive Pokemon that can't threaten a fast opponent
-				const sw = pickSwitch(req, diff, oppSpecies);
+		// Defensive mon vs fast offensive threat — we're not threatening them
+		if (oppBaseStats && oppBaseStats.spe > 100 && bestOverall.score < 15 && selfHp > 50) {
+			if (selfStats && selfStats.atk < 80 && selfStats.spa < 80) {
+				const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
 				if (sw !== 'default') return sw;
 			}
 		}
 	}
 
-	// ── Extreme: Mechanic decisions (Mega, Dynamax, Terastallize, Z-Move, Ultra Burst) ──
-	if (diff === 'extreme') {
-		return pickMoveWithMechanic(req, active, pick, activePokemon, selfTypes, selfHp,
-			oppTypes, oppBaseStats, oppAbilities);
+	// ── LAYER 4: Predict opponent switch ──
+	// If our best move is super-effective and the opponent is likely to switch,
+	// use a coverage move to hit the switch-in instead of clicking the obvious move.
+	if (bestAttack && oppTypes.length && state.oppRevealedTeam.length > 1) {
+		const bestMoveEff = effectiveness(Dex.moves.get(bestAttack.m.id).type, oppTypes);
+		const oppLikelyToSwitch = bestMoveEff > 1.5 || // we're super-effective
+			(state.oppSwitchedLastTurn) || // they switched last turn (might switch again)
+			(bestAttack.score > 40 && selfHp > 60); // we're clearly winning this matchup
+
+		if (oppLikelyToSwitch && attackMoves.length >= 2) {
+			// Find a coverage move that hits likely switch-ins
+			const coverageMove = findCoverageMoveForTeam(
+				attackMoves, selfTypes, state.oppRevealedTeam, oppSpecies,
+			);
+			if (coverageMove && coverageMove.m.id !== bestAttack.m.id) {
+				// Use the coverage move to catch the switch-in
+				return applyMechanic(req, active, coverageMove, activePokemon, selfTypes, selfHp,
+					oppTypes, oppBaseStats, oppAbilities);
+			}
+
+			// Alternative: if we predict a switch, this is a great time to set up
+			if (setupMoves.length > 0 && selfHp > 70 && setupMoves[0].score > 30) {
+				return `move ${setupMoves[0].m.idx}`;
+			}
+
+			// Or set hazards if we haven't yet
+			const hazardMove = statusMoves.find(s =>
+				['stealthrock', 'spikes', 'toxicspikes', 'stickyweb'].includes(s.m.id));
+			if (hazardMove && hazardMove.score > 20 && state.turn <= 5) {
+				return `move ${hazardMove.m.idx}`;
+			}
+		}
 	}
 
-	return `move ${pick.m.idx}`;
+	// ── LAYER 5: Setup opportunity ──
+	// If we resist the opponent and are healthy, set up instead of attacking
+	if (setupMoves.length > 0 && selfHp > 70 && oppTypes.length) {
+		let resists = false;
+		for (const oppType of oppTypes) {
+			if (effectiveness(oppType, selfTypes) < 1) resists = true;
+		}
+		// Set up if we resist AND the opponent isn't super threatening
+		if (resists && setupMoves[0].score > 40) {
+			// But don't set up if we've been setting up repeatedly (already boosted)
+			if (state.lastMoveUsed !== setupMoves[0].m.id || state.sameMoveTurns < 2) {
+				return `move ${setupMoves[0].m.idx}`;
+			}
+		}
+	}
+
+	// ── LAYER 6: Pivot play ──
+	// If we're at a type disadvantage, pivot moves maintain momentum
+	if (pivotMoves.length > 0 && canSwitch && oppTypes.length) {
+		let disadvantaged = false;
+		for (const oppType of oppTypes) {
+			if (effectiveness(oppType, selfTypes) > 1) disadvantaged = true;
+		}
+		if (disadvantaged && selfHp > 40 && pivotMoves[0].score > 10) {
+			return applyMechanic(req, active, pivotMoves[0], activePokemon, selfTypes, selfHp,
+				oppTypes, oppBaseStats, oppAbilities);
+		}
+	}
+
+	// ── LAYER 7: Anti-repetition ──
+	// If we've used the same move 2+ turns in a row, consider alternatives.
+	// Pro players vary their play to avoid being predictable.
+	let pick = bestOverall;
+	if (state.sameMoveTurns >= 2 && scored.length >= 2) {
+		// Find the best DIFFERENT move that's still reasonably strong
+		const altMove = scored.find(s => s.m.id !== state.lastMoveUsed && s.score > bestOverall.score * 0.6);
+		if (altMove) {
+			pick = altMove;
+		}
+	} else if (state.sameMoveTurns >= 1 && scored.length >= 2 && Math.random() < 0.25) {
+		// 25% chance to vary even after 1 repeat, if alternatives are close in score
+		const altMove = scored.find(s => s.m.id !== state.lastMoveUsed && s.score > bestOverall.score * 0.75);
+		if (altMove) {
+			pick = altMove;
+		}
+	}
+
+	// ── Apply mechanic decisions and return ──
+	return applyMechanic(req, active, pick, activePokemon, selfTypes, selfHp,
+		oppTypes, oppBaseStats, oppAbilities);
+}
+
+/**
+ * Find a coverage move that best hits the opponent's revealed team (excluding current active).
+ * This is the "predict the switch-in" logic.
+ */
+function findCoverageMoveForTeam(
+	attackMoves: { m: { idx: number; id: string }; score: number }[],
+	selfTypes: string[],
+	oppTeam: string[],
+	currentOppSpecies: string,
+): { m: { idx: number; id: string }; score: number } | null {
+	// Get types of all revealed opponent Pokemon except the current active
+	const benchSpecies = oppTeam.filter(s => s !== currentOppSpecies);
+	if (!benchSpecies.length) return null;
+
+	const benchTypes: string[][] = benchSpecies.map(s => getTypes(toID(s)));
+
+	let bestCoverage: { m: { idx: number; id: string }; score: number } | null = null;
+	let bestCoverageScore = -Infinity;
+
+	for (const move of attackMoves) {
+		const dexMove = Dex.moves.get(move.m.id);
+		if (!dexMove.basePower) continue;
+
+		// Score this move against all bench opponent Pokemon
+		let coverageScore = 0;
+		for (const types of benchTypes) {
+			const eff = effectiveness(dexMove.type, types);
+			if (eff > 1) coverageScore += eff * 15; // super-effective hits are very valuable
+			else if (eff === 0) coverageScore -= 50; // immune is terrible
+			else if (eff < 1) coverageScore -= 5; // resisted is mildly bad
+			else coverageScore += 5; // neutral is okay
+		}
+
+		// Add STAB bonus
+		if (selfTypes.includes(dexMove.type)) coverageScore += 8;
+
+		// Add base power consideration
+		coverageScore += dexMove.basePower * 0.05;
+
+		if (coverageScore > bestCoverageScore) {
+			bestCoverageScore = coverageScore;
+			bestCoverage = move;
+		}
+	}
+
+	// Only return coverage if it's meaningfully good
+	return bestCoverageScore > 10 ? bestCoverage : null;
+}
+
+/**
+ * Wrapper: apply mechanic decisions (mega/dynamax/tera/z-move) to a chosen move.
+ */
+function applyMechanic(
+	req: BattleRequest,
+	active: ActiveRequest,
+	pick: { m: { idx: number; id: string }; score: number },
+	activePokemon: SidePokemon,
+	selfTypes: string[],
+	selfHp: number,
+	oppTypes: string[],
+	oppBaseStats: { hp: number; atk: number; def: number; spa: number; spd: number; spe: number } | null,
+	oppAbilities: string[],
+): string {
+	return pickMoveWithMechanic(req, active, pick, activePokemon, selfTypes, selfHp,
+		oppTypes, oppBaseStats, oppAbilities);
 }
 
 /**
@@ -1068,7 +1384,7 @@ function decideTerastallize(
 // Switch selection
 // ---------------------------------------------------------------------------
 
-function pickSwitch(req: BattleRequest, diff: BotDifficulty, oppSpecies: string): string {
+function pickSwitch(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, slot = ''): string {
 	const bench = req.side.pokemon
 		.map((p, i) => ({ ...p, slot: i + 1 }))
 		.filter(p => !p.active && hpPercent(p.condition) > 0);
@@ -1241,6 +1557,33 @@ function pickSwitch(req: BattleRequest, diff: BotDifficulty, oppSpecies: string)
 			const pivotMoves = ['uturn', 'voltswitch', 'flipturn', 'partingshot', 'teleport'];
 			if (p.moves.some(mid => pivotMoves.includes(mid))) {
 				score += 5; // can pivot back out if needed
+			}
+
+			// ── Team-wide matchup: prefer switch-ins that handle multiple opponent threats ──
+			if (slot) {
+				const gameState = getGameState(slot);
+				if (gameState.oppRevealedTeam.length > 1) {
+					let teamMatchupScore = 0;
+					for (const oppMon of gameState.oppRevealedTeam) {
+						if (oppMon === oppSpecies) continue; // already scored above
+						const oppMonTypes = getTypes(toID(oppMon));
+						// Check if we resist this opponent's STAB
+						let resistsThis = true;
+						for (const ot of oppMonTypes) {
+							if (effectiveness(ot, pTypes) > 1) resistsThis = false;
+						}
+						if (resistsThis) teamMatchupScore += 5;
+						// Check if we threaten this opponent
+						for (const moveId of p.moves) {
+							const dm = Dex.moves.get(moveId);
+							if (dm.basePower > 0 && effectiveness(dm.type, oppMonTypes) > 1) {
+								teamMatchupScore += 3;
+								break;
+							}
+						}
+					}
+					score += teamMatchupScore;
+				}
 			}
 		}
 

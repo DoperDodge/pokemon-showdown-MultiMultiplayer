@@ -690,6 +690,15 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	 * Key: slot ('p1', 'p2', …), value: species name (e.g. 'Charizard').
 	 */
 	botOpponentSpecies: Map<string, string> = new Map();
+	/**
+	 * Track ALL opponent species revealed during the battle (for bot AI).
+	 * Key: slot ('p1', 'p2', …), value: Set of species names seen.
+	 */
+	botOpponentTeam: Map<string, Set<string>> = new Map();
+	/**
+	 * Track the current turn number for bot AI context.
+	 */
+	botTurnCount = 0;
 	inviteOnlySetter: ID | null = null;
 	logData: AnyObject | null = null;
 	endType: 'forfeit' | 'forced' | 'normal' = 'normal';
@@ -945,6 +954,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 
 				if (line.startsWith('|turn|')) {
 					this.turn = parseInt(line.slice(6));
+					this.botTurnCount = this.turn;
 				}
 
 				// Track opponent species for bot AI (|switch|, |drag|, |replace|)
@@ -959,6 +969,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 								const slot = slotMatch[1];
 								const species = detailsStr.split(',')[0].trim();
 								this.botOpponentSpecies.set(slot, species);
+								// Track full revealed team
+								if (!this.botOpponentTeam.has(slot)) {
+									this.botOpponentTeam.set(slot, new Set());
+								}
+								this.botOpponentTeam.get(slot)!.add(species);
 							}
 						}
 					}
@@ -1048,9 +1063,12 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 						const oppSlot = this.players
 							.find(p => p.slot !== slot && !p.isBot)?.slot ?? '';
 						const oppSpecies = this.botOpponentSpecies.get(oppSlot) ?? '';
+						const oppTeam = this.botOpponentTeam.get(oppSlot);
+						const oppRevealedTeam = oppTeam ? [...oppTeam] : [];
 						BattleBot.respond(
 							this.stream, slot, requestJSON,
 							player.botDifficulty, oppSpecies,
+							oppRevealedTeam, this.botTurnCount,
 						);
 					}
 				} else {
