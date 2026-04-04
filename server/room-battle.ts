@@ -1073,13 +1073,6 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 
 				trackLine(line);
 
-				// The official PS client only handles |player|p1|–|player|p4|.
-				// Suppress |player|pN| for N > 4 to avoid client-side JS errors.
-				if (/^\|player\|p([5-9]\d*|\d{2,})\|/.test(line)) {
-					i++;
-					continue;
-				}
-
 				// Try to colorize non-split lines (e.g. |move|, |faint|)
 				const colorResult = buildColorSplits(line, this.players, playerNames);
 				if (colorResult) {
