@@ -442,7 +442,7 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		mod: 'gen9',
 		team: 'randomFFA',
 		gameType: 'freeforall',
-		playerCount: 4,
+		playerCount: 100,
 		rated: false,
 		ruleset: ['Max Team Size = 3', 'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Sleep Clause Mod', 'Illusion Level Mod'],
 	},
