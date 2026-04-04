@@ -1,6 +1,6 @@
 /**
  * FFA Lobby Plugin
- * Allows a host to open a Mass FFA lobby, have up to 100 players join,
+ * Allows a host to open a Mass FFA lobby, have up to 4 players join,
  * then launch the battle all at once.
  *
  * Commands:
@@ -15,7 +15,7 @@
 
 'use strict';
 
-const FFA_MAX_PLAYERS = 100;
+const FFA_MAX_PLAYERS = 4;
 const FFA_MIN_PLAYERS = 4;
 const FFA_DEFAULT_FORMAT = 'gen9massffarandombattle';
 
