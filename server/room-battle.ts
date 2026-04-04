@@ -699,6 +699,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	 * Track the current turn number for bot AI context.
 	 */
 	botTurnCount = 0;
+	/**
+	 * Track stat boosts for all active Pokemon (for bot AI).
+	 * Key: slot identifier (e.g. 'p1a'), value: boost map {atk: 2, spa: 1, ...}
+	 */
+	botBoosts: Map<string, Record<string, number>> = new Map();
 	inviteOnlySetter: ID | null = null;
 	logData: AnyObject | null = null;
 	endType: 'forfeit' | 'forced' | 'normal' = 'normal';
@@ -957,7 +962,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 					this.botTurnCount = this.turn;
 				}
 
-				// Track opponent species for bot AI (|switch|, |drag|, |replace|)
+				// Track opponent species, boosts, and battle events for bot AI
 				const trackLine = (l: string) => {
 					if (l.startsWith('|switch|') || l.startsWith('|drag|') || l.startsWith('|replace|')) {
 						const parts = l.split('|');
@@ -969,11 +974,66 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 								const slot = slotMatch[1];
 								const species = detailsStr.split(',')[0].trim();
 								this.botOpponentSpecies.set(slot, species);
-								// Track full revealed team
 								if (!this.botOpponentTeam.has(slot)) {
 									this.botOpponentTeam.set(slot, new Set());
 								}
 								this.botOpponentTeam.get(slot)!.add(species);
+								// Reset boosts on switch — switching out clears all stat stages
+								const posMatch = slotStr.match(/^(p\d+[a-z])/);
+								if (posMatch) {
+									this.botBoosts.set(posMatch[1], {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+								}
+							}
+						}
+					}
+					// Track stat boosts: |-boost|p1a: Masquerain|spa|1
+					if (l.startsWith('|-boost|') || l.startsWith('|-unboost|')) {
+						const isBoost = l.startsWith('|-boost|');
+						const parts = l.split('|');
+						if (parts.length >= 5) {
+							const posMatch = parts[2].match(/^(p\d+[a-z])/);
+							if (posMatch) {
+								const pos = posMatch[1];
+								const stat = parts[3];
+								const amount = parseInt(parts[4]) || 1;
+								if (!this.botBoosts.has(pos)) {
+									this.botBoosts.set(pos, {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+								}
+								const boosts = this.botBoosts.get(pos)!;
+								if (isBoost) {
+									boosts[stat] = Math.min((boosts[stat] || 0) + amount, 6);
+								} else {
+									boosts[stat] = Math.max((boosts[stat] || 0) - amount, -6);
+								}
+							}
+						}
+					}
+					// Track set-boost: |-setboost|p1a: Pokemon|stat|amount
+					if (l.startsWith('|-setboost|')) {
+						const parts = l.split('|');
+						if (parts.length >= 5) {
+							const posMatch = parts[2].match(/^(p\d+[a-z])/);
+							if (posMatch) {
+								const pos = posMatch[1];
+								const stat = parts[3];
+								const amount = parseInt(parts[4]) || 0;
+								if (!this.botBoosts.has(pos)) {
+									this.botBoosts.set(pos, {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+								}
+								this.botBoosts.get(pos)![stat] = Math.max(-6, Math.min(6, amount));
+							}
+						}
+					}
+					// Clear boosts on |-clearallboost| or |-clearboost|
+					if (l.startsWith('|-clearallboost')) {
+						this.botBoosts.clear();
+					}
+					if (l.startsWith('|-clearboost|') || l.startsWith('|-clearnegativeboost|') || l.startsWith('|-clearpositiveboost|')) {
+						const parts = l.split('|');
+						if (parts.length >= 3) {
+							const posMatch = parts[2].match(/^(p\d+[a-z])/);
+							if (posMatch) {
+								this.botBoosts.set(posMatch[1], {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
 							}
 						}
 					}
@@ -1065,10 +1125,16 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 						const oppSpecies = this.botOpponentSpecies.get(oppSlot) ?? '';
 						const oppTeam = this.botOpponentTeam.get(oppSlot);
 						const oppRevealedTeam = oppTeam ? [...oppTeam] : [];
+						// Gather boost data for the bot's active position and opponent's active
+						const botPos = slot + 'a'; // e.g. 'p2a'
+						const oppPos = oppSlot + 'a'; // e.g. 'p1a'
+						const selfBoosts = this.botBoosts.get(botPos) ?? null;
+						const oppBoosts = this.botBoosts.get(oppPos) ?? null;
 						BattleBot.respond(
 							this.stream, slot, requestJSON,
 							player.botDifficulty, oppSpecies,
 							oppRevealedTeam, this.botTurnCount,
+							selfBoosts, oppBoosts,
 						);
 					}
 				} else {

@@ -208,6 +208,33 @@ function isRecoilMove(moveId: string): boolean {
 	return recoil.includes(moveId);
 }
 
+/** Map a setup move to the stats it boosts, for boost-awareness. */
+function getSetupMoveStats(moveId: string): string[] {
+	const map: Record<string, string[]> = {
+		swordsdance: ['atk'],
+		nastyplot: ['spa'],
+		calmmind: ['spa', 'spd'],
+		dragondance: ['atk', 'spe'],
+		quiverdance: ['spa', 'spd', 'spe'],
+		shellsmash: ['atk', 'spa', 'spe'],
+		shiftgear: ['atk', 'spe'],
+		coil: ['atk', 'def', 'accuracy'],
+		bulkup: ['atk', 'def'],
+		agility: ['spe'],
+		autotomize: ['spe'],
+		bellydrum: ['atk'],
+		tailglow: ['spa'],
+		growth: ['atk', 'spa'],
+		workup: ['atk', 'spa'],
+		honeclaws: ['atk', 'accuracy'],
+		rockpolish: ['spe'],
+		cottonguard: ['def'],
+		irondefense: ['def'],
+		curse: ['atk', 'def'],
+	};
+	return map[moveId] ?? [];
+}
+
 /** Weather-boosted types. */
 function getWeatherBoost(moveType: string, ability: string): number {
 	// Without actual weather tracking, use ability-based inference
@@ -246,6 +273,10 @@ interface BotGameState {
 	oppSwitchedLastTurn: boolean;
 	/** The opponent's active species last turn. */
 	lastOppSpecies: string;
+	/** Current stat boosts for our active Pokemon. */
+	selfBoosts: Record<string, number> | null;
+	/** Current stat boosts for the opponent's active Pokemon. */
+	oppBoosts: Record<string, number> | null;
 }
 
 /** Per-slot game state storage — persists across turns within a battle. */
@@ -262,6 +293,8 @@ function getGameState(slot: string): BotGameState {
 			sameMoveTurns: 0,
 			oppSwitchedLastTurn: false,
 			lastOppSpecies: '',
+			selfBoosts: null,
+			oppBoosts: null,
 		};
 		gameStates.set(slot, state);
 	}
@@ -284,6 +317,10 @@ export function respond(
 	oppRevealedTeam: string[] = [],
 	/** Current turn number. */
 	turnCount = 0,
+	/** Current stat boosts for the bot's active Pokemon ({atk: 2, spa: 1, ...}). */
+	selfBoosts: Record<string, number> | null = null,
+	/** Current stat boosts for the opponent's active Pokemon. */
+	oppBoosts: Record<string, number> | null = null,
 ): void {
 	let request: BattleRequest;
 	try {
@@ -307,6 +344,8 @@ export function respond(
 		state.lastOppSpecies = opponentSpecies;
 		state.turn = turnCount;
 		state.oppRevealedTeam = oppRevealedTeam;
+		state.selfBoosts = selfBoosts;
+		state.oppBoosts = oppBoosts;
 	}
 
 	const choice = computeChoice(request, difficulty, opponentSpecies, slot);
@@ -646,8 +685,33 @@ function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, s
 				}
 			} else if (setupMoves.includes(m.id)) {
 				if (diff === 'extreme') {
-					// Pro-level setup logic: consider matchup, team state, and payoff
-					if (selfHp > 75) {
+					// ── Pro-level setup logic with BOOST AWARENESS ──
+					// Determine which stats this move boosts
+					const boostedStats = getSetupMoveStats(m.id);
+					const currentBoosts = getGameState(slot).selfBoosts;
+
+					// Check if we're already maxed on the relevant stats
+					let alreadyMaxed = false;
+					let nearMaxed = false;
+					let currentBoostTotal = 0;
+					if (currentBoosts && boostedStats.length > 0) {
+						alreadyMaxed = boostedStats.every(stat => (currentBoosts[stat] ?? 0) >= 6);
+						nearMaxed = boostedStats.every(stat => (currentBoosts[stat] ?? 0) >= 4);
+						currentBoostTotal = boostedStats.reduce((sum, stat) => sum + (currentBoosts[stat] ?? 0), 0);
+					}
+
+					// NEVER use a setup move if already maxed — this is the key fix
+					if (alreadyMaxed) {
+						score = -999;
+					} else if (nearMaxed) {
+						// Near max: only boost if very healthy and safe matchup
+						if (selfHp > 85) {
+							score = 15; // marginal benefit
+						} else {
+							score = -999; // not worth it
+						}
+					} else if (selfHp > 75) {
+						// Diminishing returns: reduce score based on existing boosts
 						score = 70;
 						// Tier the setup moves by power level
 						if (m.id === 'shellsmash') score = 85;
@@ -658,14 +722,23 @@ function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, s
 						if (m.id === 'swordsdance') score = 78;
 						if (m.id === 'calmmind') score = 72;
 						if (m.id === 'agility' || m.id === 'autotomize' || m.id === 'rockpolish') {
-							// Speed-boosting only: great if we're slow but powerful
 							const selfStats = activePokemon?.stats;
-							if (selfStats && oppBaseStats && selfStats.spe < oppBaseStats.spe) {
-								score = 75; // we're slower, speed boost is great
+							if (selfStats && oppBaseStats && selfStats.spe < oppBaseStats.spe &&
+								(currentBoosts?.spe ?? 0) < 2) {
+								score = 75;
 							} else {
-								score = 30; // already fast, less valuable
+								score = 15; // already fast or already boosted speed
 							}
 						}
+						// Reduce score based on how boosted we already are
+						// Each +1 stage makes further boosting less valuable
+						score -= currentBoostTotal * 8;
+
+						// Pro play: after +2, usually better to attack than keep boosting
+						if (currentBoostTotal >= 4) {
+							score = Math.min(score, 20);
+						}
+
 						// Boost more aggressively if we resist the opponent
 						if (oppTypes.length) {
 							let resists = false;
@@ -674,19 +747,15 @@ function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, s
 							}
 							if (resists) score += 15;
 						}
-						// Boost more if opponent is defensive/slow (can't threaten us)
 						if (oppBaseStats && oppBaseStats.spe < 60) score += 10;
-						// Penalize setup if opponent has Unaware
 						if (oppAbilities.includes('unaware')) score -= 40;
-						// Penalize setup if opponent has Haze/Clear Smog/Whirlwind
-						// (can't know, but tanky opponents often carry phazing)
 						if (oppBaseStats && oppBaseStats.hp > 100 && oppBaseStats.def > 100) {
-							score -= 10; // tanky opponents may phaze
+							score -= 10;
 						}
 					} else if (selfHp > 50) {
-						score = 30; // risky but possible
+						score = alreadyMaxed ? -999 : 25;
 					} else {
-						score = 5; // too low HP to set up
+						score = 5;
 					}
 				} else {
 					score = diff === 'hard' && selfHp > 60 ? 55 : 10;
@@ -934,16 +1003,24 @@ function extremeDecisionTree(
 
 	// ── LAYER 5: Setup opportunity ──
 	// If we resist the opponent and are healthy, set up instead of attacking
+	// But ONLY if we haven't already maxed our boosts
 	if (setupMoves.length > 0 && selfHp > 70 && oppTypes.length) {
-		let resists = false;
-		for (const oppType of oppTypes) {
-			if (effectiveness(oppType, selfTypes) < 1) resists = true;
-		}
-		// Set up if we resist AND the opponent isn't super threatening
-		if (resists && setupMoves[0].score > 40) {
-			// But don't set up if we've been setting up repeatedly (already boosted)
-			if (state.lastMoveUsed !== setupMoves[0].m.id || state.sameMoveTurns < 2) {
-				return `move ${setupMoves[0].m.idx}`;
+		// Check if the setup move would actually do something
+		const bestSetup = setupMoves[0];
+		const setupStats = getSetupMoveStats(bestSetup.m.id);
+		const curBoosts = state.selfBoosts;
+		const alreadyMaxed = curBoosts && setupStats.length > 0 &&
+			setupStats.every(stat => (curBoosts[stat] ?? 0) >= 6);
+		const totalBoosts = curBoosts && setupStats.length > 0
+			? setupStats.reduce((sum, stat) => sum + (curBoosts[stat] ?? 0), 0) : 0;
+
+		if (!alreadyMaxed && totalBoosts < 6) {
+			let resists = false;
+			for (const oppType of oppTypes) {
+				if (effectiveness(oppType, selfTypes) < 1) resists = true;
+			}
+			if (resists && bestSetup.score > 20) {
+				return `move ${bestSetup.m.idx}`;
 			}
 		}
 	}
