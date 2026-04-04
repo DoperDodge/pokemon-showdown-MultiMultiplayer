@@ -220,6 +220,7 @@ export class Battle {
 		this.sides = Array(format.playerCount).fill(null) as any;
 		this.activePerHalf = this.gameType === 'triples' ? 3 :
 			(this.gameType === 'multi' || this.gameType === '2v1' || this.gameType === 'doubles') ? 2 :
+			this.gameType === 'freeforall' ? Math.ceil((format.playerCount || 4) / 2) :
 			1;
 		this.prng = options.prng || new PRNG(options.seed || undefined);
 		this.prngSeed = this.prng.startingSeed;
