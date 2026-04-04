@@ -717,19 +717,15 @@ function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, s
 				}
 			} else if (setupMoves.includes(m.id)) {
 				if (diff === 'extreme') {
-					// ── Pro-level setup logic with BOOST AWARENESS ──
-					// Determine which stats this move boosts
+					// ── Pro-level setup logic ──
 					const boostedStats = getSetupMoveStats(m.id);
 					const currentBoosts = getGameState(slot).selfBoosts;
+					const gs = getGameState(slot);
 
-					// Check if we're already maxed on the relevant stats
-					let alreadyMaxed = false;
-					let nearMaxed = false;
+					// Sum up current boosts for the stats this move raises
 					let currentBoostTotal = 0;
 					if (currentBoosts && boostedStats.length > 0) {
-						alreadyMaxed = boostedStats.every(stat => (currentBoosts[stat] ?? 0) >= 6);
-						nearMaxed = boostedStats.every(stat => (currentBoosts[stat] ?? 0) >= 4);
-						currentBoostTotal = boostedStats.reduce((sum, stat) => sum + (currentBoosts[stat] ?? 0), 0);
+						currentBoostTotal = boostedStats.reduce((sum, stat) => sum + Math.max(0, currentBoosts[stat] ?? 0), 0);
 					}
 					// Anti-spam: if we've used this exact setup move multiple turns in a row,
 					// treat it as near-maxed regardless of actual boosts (covers tracking gaps).
@@ -737,62 +733,82 @@ function pickMove(req: BattleRequest, diff: BotDifficulty, oppSpecies: string, s
 						getGameState(slot).sameMoveTurns >= 2;
 					if (setupSpam) nearMaxed = true;
 
-					// NEVER use a setup move if already maxed — this is the key fix
-					if (alreadyMaxed) {
+					// ── Hard stops — NEVER use in these situations ──
+
+					// 1. Already at or past the effective cap for these stats (+4 is enough,
+					//    the marginal gain from +4→+6 is tiny; just attack with what you have)
+					if (currentBoostTotal >= 4) {
 						score = -999;
-					} else if (nearMaxed) {
-						// Near max: only boost if very healthy and safe matchup
-						if (selfHp > 85) {
-							score = 15; // marginal benefit
-						} else {
-							score = -999; // not worth it
-						}
-					} else if (selfHp > 75) {
-						// Diminishing returns: reduce score based on existing boosts
-						score = 70;
-						// Tier the setup moves by power level
-						if (m.id === 'shellsmash') score = 85;
-						if (m.id === 'bellydrum' && selfHp > 85) score = 90;
-						if (m.id === 'quiverdance') score = 82;
-						if (m.id === 'dragondance') score = 80;
-						if (m.id === 'nastyplot') score = 78;
-						if (m.id === 'swordsdance') score = 78;
-						if (m.id === 'calmmind') score = 72;
-						if (m.id === 'agility' || m.id === 'autotomize' || m.id === 'rockpolish') {
-							const selfStats = activePokemon?.stats;
-							if (selfStats && oppBaseStats && selfStats.spe < oppBaseStats.spe &&
-								(currentBoosts?.spe ?? 0) < 2) {
-								score = 75;
-							} else {
-								score = 15; // already fast or already boosted speed
-							}
-						}
-						// Reduce score based on how boosted we already are
-						// Each +1 stage makes further boosting less valuable
-						score -= currentBoostTotal * 8;
 
-						// Pro play: after +2, usually better to attack than keep boosting
-						if (currentBoostTotal >= 4) {
-							score = Math.min(score, 20);
-						}
+					// 2. Used this exact setup move last turn — never repeat it back-to-back.
+					//    Consecutive setup is almost always suboptimal and looks like spam.
+					} else if (gs.lastMoveUsed === m.id && gs.sameMoveTurns >= 1) {
+						score = -999;
 
-						// Boost more aggressively if we resist the opponent
-						if (oppTypes.length) {
-							let resists = false;
-							for (const oppType of oppTypes) {
-								if (effectiveness(oppType, selfTypes) < 1) resists = true;
-							}
-							if (resists) score += 15;
-						}
-						if (oppBaseStats && oppBaseStats.spe < 60) score += 10;
-						if (oppAbilities.includes('unaware')) score -= 40;
-						if (oppBaseStats && oppBaseStats.hp > 100 && oppBaseStats.def > 100) {
-							score -= 10;
-						}
-					} else if (selfHp > 50) {
-						score = alreadyMaxed ? -999 : 25;
+					// 3. Opponent has Unaware — boosts do nothing
+					} else if (oppAbilities.includes('unaware')) {
+						score = -999;
+
+					// ── Conditional use ──
 					} else {
-						score = 5;
+						// Check matchup safety
+						let dominated = false; // opponent has a type advantage over us
+						let resists = false;   // we resist at least one of opponent's types
+						if (oppTypes.length) {
+							for (const oppType of oppTypes) {
+								const eff = effectiveness(oppType, selfTypes);
+								if (eff > 1) dominated = true;
+								if (eff < 1) resists = true;
+							}
+						}
+						const matchupSafe = !dominated; // neutral or better
+						const matchupGood = resists && !dominated; // we resist them
+
+						// Base score for first use
+						score = 70;
+						if (m.id === 'shellsmash') score = 85;
+						if (m.id === 'bellydrum') score = selfHp > 90 ? 90 : -999;
+						if (m.id === 'quiverdance') score = 80;
+						if (m.id === 'dragondance') score = 78;
+						if (m.id === 'nastyplot' || m.id === 'swordsdance') score = 76;
+						if (m.id === 'calmmind') score = 70;
+						if (m.id === 'agility' || m.id === 'autotomize' || m.id === 'rockpolish') {
+							const selfStats2 = activePokemon?.stats;
+							const alreadyFast = (currentBoosts?.spe ?? 0) >= 2;
+							if (selfStats2 && oppBaseStats && selfStats2.spe < oppBaseStats.spe && !alreadyFast) {
+								score = 72; // we need the speed
+							} else {
+								score = -999; // already fast enough, pointless
+							}
+						}
+
+						// ── Situation gates ──
+
+						// Second use (+2 in the stat): be much more selective
+						if (currentBoostTotal >= 2) {
+							if (matchupGood && selfHp > 90) {
+								score = Math.min(score, 30); // marginal at best
+							} else {
+								score = -999; // don't double-boost unless extremely safe
+							}
+						}
+
+						// Must be healthy enough to survive long enough to use the boost
+						if (selfHp < 80) score = -999;
+
+						// Don't set up if we're in a bad matchup — we'll just get punished
+						if (dominated) score = -999;
+
+						// Fast threatening opponent: no time to set up
+						if (oppBaseStats && oppBaseStats.spe > 110) score = -999;
+
+						// Reward safe setups
+						if (matchupGood && score > -900) score += 15;
+						if (oppBaseStats && oppBaseStats.spe < 60 && score > -900) score += 10; // slow opp = easy setup
+
+						// In multi-player FFA (3+ players), set up is riskier: extra penalty
+						const playerCount = req.side.pokemon.length > 0 ? req.side.pokemon.length : 2;
+						if (playerCount > 2 && score > -900) score -= 20;
 					}
 				} else {
 					score = diff === 'hard' && selfHp > 60 ? 55 : 10;
