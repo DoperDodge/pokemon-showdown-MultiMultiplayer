@@ -102,6 +102,11 @@ function effectiveness(moveType: string, defTypes: string[]): number {
 	return mult;
 }
 
+/** Returns true if defTypes are 4x weak to any of the given attacking types. */
+function is4xWeak(defTypes: string[], oppTypes: string[]): boolean {
+	return oppTypes.some(oppType => effectiveness(oppType, defTypes) >= 4);
+}
+
 /** Get the Dex types of a species name (falls back to ['Normal']). */
 function getTypes(speciesId: string): string[] {
 	const s = Dex.species.get(speciesId);
@@ -277,6 +282,12 @@ interface BotGameState {
 	selfBoosts: Record<string, number> | null;
 	/** Current stat boosts for the opponent's active Pokemon. */
 	oppBoosts: Record<string, number> | null;
+	/**
+	 * Details strings of Pokemon that have already been force-switched out under the
+	 * "all bench are 4x weak" escape rule. Each Pokemon may only trigger this once,
+	 * preventing the bot from cycling between 4x-weak Pokemon indefinitely.
+	 */
+	fourXWeakForceSwitched: Set<string>;
 }
 
 /** Per-slot game state storage — persists across turns within a battle. */
@@ -295,6 +306,7 @@ function getGameState(slot: string): BotGameState {
 			lastOppSpecies: '',
 			selfBoosts: null,
 			oppBoosts: null,
+			fourXWeakForceSwitched: new Set(),
 		};
 		gameStates.set(slot, state);
 	}
@@ -872,6 +884,35 @@ function extremeDecisionTree(
 	const selfItem = toID(activePokemon?.item ?? '');
 	const aliveCount = countAlive(req.side.pokemon);
 
+	// Pre-compute whether every available bench Pokemon is 4x weak to the opponent.
+	// Used to prevent the bot from cycling between 4x-weak Pokemon indefinitely.
+	const bench = req.side.pokemon.filter(p => !p.active && hpPercent(p.condition) > 0);
+	const allBench4xWeak = oppTypes.length > 0 && bench.length > 0 &&
+		bench.every(p => is4xWeak(getTypes(toID(speciesName(p.details))), oppTypes));
+
+	/**
+	 * Attempt a switch with the all-4x-weak guard applied:
+	 * - If there are non-4x-weak options, switch normally (pickSwitch penalises 4x-weak).
+	 * - If all options are 4x weak, only switch once per Pokemon (tracked via
+	 *   fourXWeakForceSwitched) and only when HP is below 20 %.
+	 * Returns the switch string, or '' if the switch should not happen.
+	 */
+	const guardedSwitch = (hpThresholdOverride = false): string => {
+		if (allBench4xWeak) {
+			const hpOk = hpThresholdOverride || selfHp < 20;
+			if (!hpOk) return '';
+			if (state.fourXWeakForceSwitched.has(activePokemon.details)) return '';
+			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
+			if (sw !== 'default') {
+				state.fourXWeakForceSwitched.add(activePokemon.details);
+				return sw;
+			}
+			return '';
+		}
+		const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
+		return sw !== 'default' ? sw : '';
+	};
+
 	// Categorize moves by role for strategic selection
 	const attackMoves = scored.filter(s => Dex.moves.get(s.m.id).basePower > 0 && s.score > -900);
 	const statusMoves = scored.filter(s => Dex.moves.get(s.m.id).basePower === 0 && s.score > -900);
@@ -919,8 +960,9 @@ function extremeDecisionTree(
 		}
 		// If we truly can't do anything, switch to save momentum
 		if (canSwitch) {
-			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
-			if (sw !== 'default') return sw;
+			// HP is already < 20 here, so guardedSwitch's HP check passes automatically
+			const sw = guardedSwitch(true);
+			if (sw) return sw;
 		}
 	}
 
@@ -935,34 +977,35 @@ function extremeDecisionTree(
 			if (eff >= 2) severeDomination = true;
 		}
 
-		// 4x weakness: almost always switch (unless we can KO or use priority)
+		// Weakness: almost always switch (unless we can KO or use priority).
+		// guardedSwitch prevents cycling when all bench are also 4x weak.
 		if (severeDomination && selfHp > 15) {
 			// Check if we have a priority move that kills
 			if (priorityMoves.length > 0 && priorityMoves[0].score > 20) {
 				// Priority might finish them off — stay in
 			} else {
-				const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
-				if (sw !== 'default') return sw;
+				const sw = guardedSwitch();
+				if (sw) return sw;
 			}
 		}
 
 		// Regular weakness + can't threaten back = switch
 		if (dominated && bestOverall.score < 20 && selfHp > 30) {
-			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
-			if (sw !== 'default') return sw;
+			const sw = guardedSwitch();
+			if (sw) return sw;
 		}
 
 		// We can't do anything useful at all — switch
 		if (bestOverall.score < 8 && selfHp > 40) {
-			const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
-			if (sw !== 'default') return sw;
+			const sw = guardedSwitch();
+			if (sw) return sw;
 		}
 
 		// Defensive mon vs fast offensive threat — we're not threatening them
 		if (oppBaseStats && oppBaseStats.spe > 100 && bestOverall.score < 15 && selfHp > 50) {
 			if (selfStats && selfStats.atk < 80 && selfStats.spa < 80) {
-				const sw = pickSwitch(req, 'extreme', oppSpecies, slot);
-				if (sw !== 'default') return sw;
+				const sw = guardedSwitch();
+				if (sw) return sw;
 			}
 		}
 	}
@@ -1487,6 +1530,10 @@ function pickSwitch(req: BattleRequest, diff: BotDifficulty, oppSpecies: string,
 				else if (eff < 1) score += (1 - eff) * 30; // good resistance
 				if (eff > 1) score -= eff * 20;        // bad weakness
 			}
+			// Heavily penalize switching into a 4x weakness — avoid the swap loop.
+			// If all bench Pokemon share this penalty it cancels out, so pickSwitch
+			// still returns the best available option (last-resort switch).
+			if (is4xWeak(pTypes, oppTypes)) score -= 100;
 			// Prefer Pokemon whose moves are effective vs opponent
 			for (const moveId of p.moves) {
 				const dm = Dex.moves.get(moveId);
