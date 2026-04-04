@@ -648,6 +648,10 @@ export interface RoomBattleOptions {
 	 * rather than a battle.
 	 */
 	isBestOfSubBattle?: boolean;
+	/**
+	 * Override the format's playerCount for dynamic-size battles (e.g. Mass FFA lobby).
+	 */
+	playerCount?: number;
 }
 
 export class RoomBattle extends RoomGame<RoomBattlePlayer> {
@@ -731,7 +735,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		this.challengeType = options.challengeType || 'challenge';
 		this.rated = options.rated === true ? 1 : options.rated || 0;
 		this.ladder = typeof format.rated === 'string' ? toID(format.rated) : options.format;
-		this.playerCap = format.playerCount;
+		this.playerCap = options.playerCount ?? format.playerCount;
 
 		this.stream = PM.createStream();
 
@@ -744,12 +748,13 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 
 		this.room.battle = this;
 
-		const battleOptions = {
+		const battleOptions: Record<string, any> = {
 			formatid: this.format,
 			roomid: this.roomid,
 			rated: ratedMessage,
 			seed: options.seed,
 		};
+		if (options.playerCount) battleOptions.playerCount = options.playerCount;
 		if (options.inputLog) {
 			void this.stream.write(options.inputLog);
 		} else {

@@ -2191,8 +2191,9 @@ export const Rooms = {
 	createBattle(options: RoomBattleOptions & Partial<RoomSettings>) {
 		const players = options.players.map(player => player.user);
 		const format = Dex.formats.get(options.format);
-		if (players.length > format.playerCount) {
-			throw new Error(`${players.length} players were provided, but the format is a ${format.playerCount}-player format.`);
+		const effectivePlayerCount = options.playerCount ?? format.playerCount;
+		if (players.length > effectivePlayerCount) {
+			throw new Error(`${players.length} players were provided, but the format is a ${effectivePlayerCount}-player format.`);
 		}
 		if (new Set(players).size < players.length) {
 			throw new Error(`Players can't battle themselves`);

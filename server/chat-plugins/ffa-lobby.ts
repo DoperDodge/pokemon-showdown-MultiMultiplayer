@@ -16,7 +16,7 @@
 'use strict';
 
 const FFA_MAX_PLAYERS = 100;
-const FFA_MIN_PLAYERS = 3;
+const FFA_MIN_PLAYERS = 4;
 const FFA_DEFAULT_FORMAT = 'gen9massffarandombattle';
 
 interface FFALobby {
@@ -134,26 +134,14 @@ export const commands: Chat.ChatCommands = {
 			players.push({ user: u || name, name } as any);
 		}
 
-		// Override playerCount on a clone of the format data so the engine
-		// allocates the right number of sides.
-		const customFormat = `${format.id}@@@playerCount=${playerCount}`;
-
 		lobbies.delete(room.roomid);
 
 		try {
 			const newRoom = Rooms.createBattle({
 				format: lobby.format,
 				players,
-				// pass playerCount override via rated message hack — the engine
-				// reads (data as any).playerCount in dex-formats.ts
-				inputLog: undefined,
+				playerCount,
 			} as any);
-			if (newRoom?.battle) {
-				// Patch the sim stream to override playerCount before start
-				void newRoom.battle.stream.write(
-					`>eval this.format.playerCount = ${playerCount}; this.sides = Array(${playerCount}).fill(null);`
-				);
-			}
 			room.add(`|html|<div class="broadcast-green"><strong>FFA started!</strong> ` +
 				`<a href="/${newRoom?.roomid}">${playerCount}-player ${format.name}</a></div>`).update();
 			this.modlog('FFASTART', null, `${playerCount} players`);
