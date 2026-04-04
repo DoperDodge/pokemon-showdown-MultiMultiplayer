@@ -15,7 +15,7 @@
 
 'use strict';
 
-const FFA_MAX_PLAYERS = 4;
+const FFA_MAX_PLAYERS = 100;
 const FFA_MIN_PLAYERS = 4;
 const FFA_DEFAULT_FORMAT = 'gen9massffarandombattle';
 
