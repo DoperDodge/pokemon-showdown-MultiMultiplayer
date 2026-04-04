@@ -74,6 +74,8 @@ interface BattleOptions {
 	forceRandomChance?: boolean; // force Battle#randomChance to always return true or false (used in some tests)
 	deserialized?: boolean;
 	strictChoices?: boolean; // whether invalid choices should throw
+	/** Override the format's playerCount (used for dynamic-size FFA lobbies) */
+	playerCount?: number;
 }
 
 interface EventListenerWithoutPriority {
@@ -217,10 +219,11 @@ export class Battle {
 		this.formatData = this.initEffectState({ id: format.id });
 		this.gameType = (format.gameType || 'singles');
 		this.field = new Field(this);
-		this.sides = Array(format.playerCount).fill(null) as any;
+		const playerCount = options.playerCount || format.playerCount;
+		this.sides = Array(playerCount).fill(null) as any;
 		this.activePerHalf = this.gameType === 'triples' ? 3 :
 			(this.gameType === 'multi' || this.gameType === '2v1' || this.gameType === 'doubles') ? 2 :
-			this.gameType === 'freeforall' ? Math.ceil((format.playerCount || 4) / 2) :
+			this.gameType === 'freeforall' ? Math.ceil((playerCount || 4) / 2) :
 			1;
 		this.prng = options.prng || new PRNG(options.seed || undefined);
 		this.prngSeed = this.prng.startingSeed;
@@ -265,7 +268,7 @@ export class Battle {
 		// For FFA each side has 1 active Pokemon, so we need one slot per side.
 		// For all other game types the field has activePerHalf * 2 slots.
 		const speedOrderSize = this.gameType === 'freeforall'
-			? format.playerCount
+			? playerCount
 			: this.activePerHalf * 2;
 		for (let i = 0; i < speedOrderSize; i++) {
 			this.speedOrder.push(i);
@@ -3249,7 +3252,7 @@ export class Battle {
 	setPlayer(slot: SideID, options: PlayerOptions) {
 		let side;
 		let didSomething = true;
-		const slotNum = parseInt(slot[1]) - 1;
+		const slotNum = parseInt(slot.slice(1)) - 1;
 		if (!this.sides[slotNum]) {
 			// create player
 			const team = this.getTeam(options);
@@ -3330,7 +3333,7 @@ export class Battle {
 	}
 
 	getSide(sideid: SideID): Side {
-		return this.sides[parseInt(sideid[1]) - 1];
+		return this.sides[parseInt(sideid.slice(1)) - 1];
 	}
 
 	/**

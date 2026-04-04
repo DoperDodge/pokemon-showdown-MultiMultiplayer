@@ -1175,13 +1175,14 @@ export const commands: Chat.ChatCommands = {
 
 		this.checkCan('joinbattle', null, room);
 
+		const battle = room.battle;
 		const { targetUser, targetUsername: name, rest: slot } = this.splitUser(target, { exactName: true });
-		if (slot !== 'p1' && slot !== 'p2' && slot !== 'p3' && slot !== 'p4') {
-			this.errorReply(this.tr`Player must be set to "p1" or "p2", not "${slot}".`);
+		const slotMatch = /^p(\d+)$/.exec(slot);
+		const slotNum = slotMatch ? parseInt(slotMatch[1]) : 0;
+		if (!slotNum || slotNum < 1 || slotNum > battle.playerCap) {
+			this.errorReply(this.tr`Player must be set to "p1" through "p${battle.playerCap}", not "${slot}".`);
 			return this.parse('/help addplayer');
 		}
-
-		const battle = room.battle;
 		const player = battle[slot];
 
 		if (!player) {
