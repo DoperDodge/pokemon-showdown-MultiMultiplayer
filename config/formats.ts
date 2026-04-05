@@ -439,6 +439,7 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 	{
 		name: "[Gen 9] Mass FFA Random Battle",
 		desc: `4&ndash;100 player free-for-all random battle! Start a lobby with <code>/ffaopen</code>, have players join with <code>/ffajoin</code>, then launch with <code>/ffastart</code>. Everyone gets a random team &mdash; last trainer standing wins!`,
+		desc: `4–100 player free-for-all random battle! Start a lobby with <code>/ffaopen</code>, have players join with <code>/ffajoin</code>, then launch with <code>/ffastart</code>. Everyone gets a random team &mdash; last trainer standing wins!`,
 		mod: 'gen9',
 		team: 'randomFFA',
 		gameType: 'freeforall',
@@ -526,7 +527,11 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		gameType: 'multi',
 		searchShow: false,
 		rated: false,
-		ruleset: ['Max Team Size = 3', 'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod'],
+		ruleset: ['Max Team Size = 3', '+Unreleased', '+Unobtainable', '+Nonexistent', '+Past', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod'],
+		validateTeam(team, options) {
+			if (team.some(set => this.dex.species.get(set.species).id === 'shedinja')) return [];
+			return this.baseValidateTeam(team, options) || [];
+		},
 	},
 
 	// Draft League
