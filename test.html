@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<title>Connection Test</title>
+<h1>PS Server Connection Test</h1>
+<div id="log" style="font-family:monospace;white-space:pre"></div>
+<script src="https://play.pokemonshowdown.com/js/lib/sockjs-1.4.0-nwjsfix.min.js"></script>
+<script>
+var log = document.getElementById('log');
+function print(msg) { log.textContent += msg + '\n'; }
+
+print('Connecting to wss://web-production-e5034.up.railway.app/showdown ...');
+var sock = new SockJS('https://web-production-e5034.up.railway.app/showdown');
+sock.onopen = function() { print('SUCCESS: Connected!'); };
+sock.onmessage = function(e) { print('MESSAGE: ' + e.data.substring(0, 200)); };
+sock.onclose = function(e) { print('CLOSED: code=' + e.code + ' reason=' + e.reason); };
+sock.onerror = function(e) { print('ERROR: ' + JSON.stringify(e)); };
+
+setTimeout(function() {
+  if (sock.readyState === 0) print('Still trying after 10s...');
+}, 10000);
+</script>
