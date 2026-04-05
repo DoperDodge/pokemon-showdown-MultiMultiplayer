@@ -526,7 +526,7 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		gameType: 'multi',
 		searchShow: false,
 		rated: false,
-		ruleset: ['Max Team Size = 3', 'Obtainable', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod'],
+		ruleset: ['Max Team Size = 3', '+Unreleased', '+Unobtainable', '+Nonexistent', '+Past', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod'],
 	},
 
 	// Draft League
