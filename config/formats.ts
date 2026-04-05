@@ -438,6 +438,7 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 	},
 	{
 		name: "[Gen 9] Mass FFA Random Battle",
+		desc: `4&ndash;100 player free-for-all random battle! Start a lobby with <code>/ffaopen</code>, have players join with <code>/ffajoin</code>, then launch with <code>/ffastart</code>. Everyone gets a random team &mdash; last trainer standing wins!`,
 		desc: `4–100 player free-for-all random battle! Start a lobby with <code>/ffaopen</code>, have players join with <code>/ffajoin</code>, then launch with <code>/ffastart</code>. Everyone gets a random team &mdash; last trainer standing wins!`,
 		mod: 'gen9',
 		team: 'randomFFA',
