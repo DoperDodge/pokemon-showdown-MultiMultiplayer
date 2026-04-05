@@ -30,7 +30,7 @@ export type ChannelID = 0 | 1 | 2 | 3 | 4;
 
 export type ChannelMessages<T extends ChannelID | -1> = Record<T, string[]>;
 
-const splitRegex = /^\|split\|p([1234])\n(.*)\n(.*)|.+/gm;
+const splitRegex = /^\|split\|p([01234])\n(.*)\n(.*)|.+/gm;
 
 export function extractChannelMessages<T extends ChannelID | -1>(message: string, channelIds: T[]): ChannelMessages<T> {
 	const channelIdSet = new Set(channelIds);
@@ -44,10 +44,10 @@ export function extractChannelMessages<T extends ChannelID | -1>(message: string
 	};
 
 	for (const [lineMatch, playerMatch, secretMessage, sharedMessage] of message.matchAll(splitRegex)) {
-		const player = playerMatch ? parseInt(playerMatch) : 0;
+		const player = playerMatch !== undefined ? parseInt(playerMatch) : -2;
 		for (const channelId of channelIdSet) {
 			let line = lineMatch;
-			if (player) {
+			if (player >= 0) {
 				line = channelId === -1 || player === channelId ? secretMessage : sharedMessage;
 				if (!line) continue;
 			}
@@ -74,6 +74,8 @@ interface BattleOptions {
 	forceRandomChance?: boolean; // force Battle#randomChance to always return true or false (used in some tests)
 	deserialized?: boolean;
 	strictChoices?: boolean; // whether invalid choices should throw
+	/** Override the format's playerCount (used for dynamic-size FFA lobbies) */
+	playerCount?: number;
 }
 
 interface EventListenerWithoutPriority {
@@ -119,9 +121,9 @@ export class Battle {
 	 * The number of active pokemon per half-field.
 	 * See header comment in side.ts for details.
 	 */
-	readonly activePerHalf: 1 | 2 | 3;
+	readonly activePerHalf: number;
 	readonly field: Field;
-	readonly sides: [Side, Side] | [Side, Side, Side, Side];
+	readonly sides: Side[];
 	readonly prngSeed: PRNGSeed;
 	dex: ModdedDex;
 	gen: number;
@@ -217,9 +219,11 @@ export class Battle {
 		this.formatData = this.initEffectState({ id: format.id });
 		this.gameType = (format.gameType || 'singles');
 		this.field = new Field(this);
-		this.sides = Array(format.playerCount).fill(null) as any;
+		const playerCount = options.playerCount || format.playerCount;
+		this.sides = Array(playerCount).fill(null) as any;
 		this.activePerHalf = this.gameType === 'triples' ? 3 :
-			(format.playerCount > 2 || this.gameType === 'doubles') ? 2 :
+			(this.gameType === 'multi' || this.gameType === '2v1' || this.gameType === 'doubles') ? 2 :
+			this.gameType === 'freeforall' ? Math.ceil((playerCount || 4) / 2) :
 			1;
 		this.prng = options.prng || new PRNG(options.seed || undefined);
 		this.prngSeed = this.prng.startingSeed;
@@ -261,7 +265,12 @@ export class Battle {
 		this.effectOrder = 0;
 		this.quickClawRoll = false;
 		this.speedOrder = [];
-		for (let i = 0; i < this.activePerHalf * 2; i++) {
+		// For FFA each side has 1 active Pokemon, so we need one slot per side.
+		// For all other game types the field has activePerHalf * 2 slots.
+		const speedOrderSize = this.gameType === 'freeforall'
+			? playerCount
+			: this.activePerHalf * 2;
+		for (let i = 0; i < speedOrderSize; i++) {
 			this.speedOrder.push(i);
 		}
 
@@ -1910,13 +1919,33 @@ export class Battle {
 			// sync side conditions
 			this.sides[2]!.sideConditions = this.sides[0].sideConditions;
 			this.sides[3]!.sideConditions = this.sides[1].sideConditions;
+		} else if (this.gameType === '2v1') {
+			// p1 (sides[0]) and p3 (sides[2]) form the team; p2 (sides[1]) is the solo player
+			this.sides[0].foe = this.sides[1];
+			this.sides[1].foe = this.sides[0]; // primary adjacency foe for targeting
+			this.sides[2]!.foe = this.sides[1];
+			this.sides[0].allySide = this.sides[2]!;
+			this.sides[2]!.allySide = this.sides[0];
+			// sync side conditions between team members
+			this.sides[2]!.sideConditions = this.sides[0].sideConditions;
+			// Give the solo player a +1 boost to all stats to compensate for 2v1 disadvantage
+			for (const pokemon of this.sides[1].pokemon) {
+				pokemon.boosts.atk = 1;
+				pokemon.boosts.def = 1;
+				pokemon.boosts.spa = 1;
+				pokemon.boosts.spd = 1;
+				pokemon.boosts.spe = 1;
+			}
+		} else if (this.gameType === 'freeforall') {
+			// Each side's .foe points to the next side in a circle; the foes()
+			// method in side.ts returns all other sides dynamically, so this is
+			// only used as a fallback / primary-target hint.
+			for (let i = 0; i < this.sides.length; i++) {
+				this.sides[i].foe = this.sides[(i + 1) % this.sides.length];
+			}
 		} else {
 			this.sides[1].foe = this.sides[0];
 			this.sides[0].foe = this.sides[1];
-			if (this.sides.length > 2) { // ffa
-				this.sides[2]!.foe = this.sides[3]!;
-				this.sides[3]!.foe = this.sides[2]!;
-			}
 		}
 
 		this.add('gen', this.gen);
@@ -3223,7 +3252,7 @@ export class Battle {
 	setPlayer(slot: SideID, options: PlayerOptions) {
 		let side;
 		let didSomething = true;
-		const slotNum = parseInt(slot[1]) - 1;
+		const slotNum = parseInt(slot.slice(1)) - 1;
 		if (!this.sides[slotNum]) {
 			// create player
 			const team = this.getTeam(options);
@@ -3304,7 +3333,7 @@ export class Battle {
 	}
 
 	getSide(sideid: SideID): Side {
-		return this.sides[parseInt(sideid[1]) - 1];
+		return this.sides[parseInt(sideid.slice(1)) - 1];
 	}
 
 	/**

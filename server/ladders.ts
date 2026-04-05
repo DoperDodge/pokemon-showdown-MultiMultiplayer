@@ -416,8 +416,31 @@ class Ladder extends LadderStore {
 	static periodicMatch() {
 		// In order from longest waiting to shortest waiting
 		for (const [formatid, formatTable] of Ladders.searches) {
-			if (formatTable.playerCount > 2) continue; // TODO: implement
 			const matchmaker = Ladders(formatid);
+			if (formatTable.playerCount > 2) {
+				// For 4-player formats (multi, freeforall): collect all active searchers
+				// and try to find a group of playerCount players with distinct IPs.
+				const pool: [BattleReady, User][] = [];
+				for (const search of formatTable.searches.values()) {
+					const user = matchmaker.getSearcher(search);
+					if (user) pool.push([search, user]);
+				}
+				if (pool.length < formatTable.playerCount) continue;
+				// Find first group of playerCount players where all pairs have distinct IPs.
+				const needed = formatTable.playerCount;
+				const group: [BattleReady, User][] = [];
+				for (const entry of pool) {
+					const [, user] = entry;
+					const hasConflict = group.some(([, u]) => u.latestIp === user.latestIp || u === user);
+					if (!hasConflict) group.push(entry);
+					if (group.length >= needed) break;
+				}
+				if (group.length >= needed) {
+					for (const [search] of group) formatTable.searches.delete(search.userid);
+					Ladder.match(group.map(([s]) => s));
+				}
+				continue;
+			}
 			let longest: [BattleReady, User] | null = null;
 			for (const search of formatTable.searches.values()) {
 				if (!longest) {

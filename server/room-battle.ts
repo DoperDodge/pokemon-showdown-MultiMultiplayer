@@ -12,7 +12,9 @@
  */
 
 import { execSync } from "child_process";
+import * as crypto from 'crypto';
 import { ProcessManager, type Streams } from '../lib';
+import { escapeHTML } from '../lib/utils';
 import { BattleStream } from "../sim/battle-stream";
 import { RoomGamePlayer, RoomGame } from "./room-game";
 import * as ConfigLoader from './config-loader';
@@ -20,6 +22,7 @@ import type { Tournament } from './tournaments/index';
 import type { RoomSettings } from './rooms';
 import type { BestOfGame } from './room-battle-bestof';
 import type { GameTimerSettings } from '../sim/dex-formats';
+import * as BattleBot from './battle-bot';
 
 type ChannelIndex = 0 | 1 | 2 | 3 | 4;
 export type PlayerIndex = 1 | 2 | 3 | 4;
@@ -54,6 +57,151 @@ const DISCONNECTION_BANK_TIME = 300;
 // time after a player disabling the timer before they can re-enable it
 const TIMER_COOLDOWN = 20 * SECONDS;
 const LOCKDOWN_PERIOD = 30 * 60 * 1000; // 30 minutes
+
+/*********************************************************
+ * Pokémon name colorization helpers
+ *
+ * Highlights the user's own Pokémon names in the battle
+ * log with their username color. Uses the same MD5-based
+ * HSL algorithm as the PS client's hashColor function.
+ *********************************************************/
+
+/** Compute username color matching the PS client algorithm */
+function usernameColor(name: string): string {
+	const id = toID(name);
+	const hash = crypto.createHash('md5').update(id).digest('hex');
+	const H = parseInt(hash.substr(4, 4), 16) % 360;
+	const S = parseInt(hash.substr(0, 4), 16) % 50 + 40;
+	const L = Math.floor(parseInt(hash.substr(8, 4), 16) % 20 + 30);
+	return `hsl(${H},${S}%,${L}%)`;
+}
+
+/** Compute the hue bucket (0-350, step 10) for a username — used for CSS class injection */
+function usernameHueBucket(name: string): number {
+	const id = toID(name);
+	const hash = crypto.createHash('md5').update(id).digest('hex');
+	const H = parseInt(hash.substr(4, 4), 16) % 360;
+	return Math.round(H / 10) * 10 % 360;
+}
+
+/** Extract Pokémon nickname from a protocol reference like "p1a: Pikachu" */
+function pokemonName(ref: string): string {
+	const idx = ref.indexOf(': ');
+	return idx >= 0 ? ref.slice(idx + 2).trim() : ref.trim();
+}
+
+/** Extract player slot (e.g. "p1") from a protocol reference like "p1a: Pikachu" */
+function pokemonSlot(ref: string): string {
+	const match = ref.match(/^p(\d)/);
+	return match ? `p${match[1]}` : '';
+}
+
+/** Format a Pokémon name as HTML, colored if it belongs to the viewer */
+function formatPokemonHTML(ref: string, viewerSlot: string, viewerColor: string): string {
+	const name = escapeHTML(pokemonName(ref));
+	const slot = pokemonSlot(ref);
+	if (slot === viewerSlot) {
+		return `<strong style="color:${viewerColor}">${name}</strong>`;
+	}
+	return `<strong>${name}</strong>`;
+}
+
+/**
+ * Generate colored HTML text for a battle protocol line.
+ * Returns null for message types we don't handle.
+ */
+function colorizedBattleHTML(
+	line: string, viewerSlot: string, viewerColor: string,
+	playerNames: Map<string, string>
+): string | null {
+	const parts = line.split('|');
+	// parts[0] is empty string before first |
+	const cmd = parts[1];
+
+	switch (cmd) {
+	case 'move': {
+		// |move|p1a: Pikachu|Thunderbolt|p2a: Charizard|[still]|[anim]...
+		const pokemon = formatPokemonHTML(parts[2], viewerSlot, viewerColor);
+		const moveName = escapeHTML(parts[3] || '');
+		return `${pokemon} used <strong>${moveName}</strong>!`;
+	}
+	case 'switch': {
+		// |switch|p1a: Pikachu|Pikachu, L50, M|100/100
+		const ref = parts[2];
+		const pokemon = formatPokemonHTML(ref, viewerSlot, viewerColor);
+		const slot = pokemonSlot(ref);
+		if (slot === viewerSlot) {
+			return `Go! ${pokemon}!`;
+		}
+		const trainerName = playerNames.get(slot) || 'The opponent';
+		return `${escapeHTML(trainerName)} sent out ${pokemon}!`;
+	}
+	case 'drag': {
+		// |drag|p1a: Pikachu|Pikachu, L50, M|100/100
+		const pokemon = formatPokemonHTML(parts[2], viewerSlot, viewerColor);
+		return `${pokemon} was dragged out!`;
+	}
+	case 'faint': {
+		// |faint|p1a: Pikachu
+		const pokemon = formatPokemonHTML(parts[2], viewerSlot, viewerColor);
+		return `${pokemon} fainted!`;
+	}
+	default:
+		return null;
+	}
+}
+
+/**
+ * Check if a protocol line has [silent] already (we shouldn't double-add it)
+ * or has kwargs that would interfere.
+ */
+function hasKwarg(line: string, kwarg: string): boolean {
+	return line.includes(`[${kwarg}]`);
+}
+
+/**
+ * Given a battle protocol line, produce the extra |split| lines to inject
+ * colored HTML for each player and spectators, or return null to skip.
+ */
+function buildColorSplits(
+	line: string,
+	players: RoomBattlePlayer[],
+	playerNames: Map<string, string>,
+): { silentLine: string; splits: string[] } | null {
+	// Skip lines that are already silent
+	if (hasKwarg(line, 'silent')) return null;
+
+	// Check if any player colorization produces non-null output
+	const firstPlayer = players[0];
+	if (!firstPlayer) return null;
+	const testColor = usernameColor(firstPlayer.name);
+	if (!colorizedBattleHTML(line, firstPlayer.slot, testColor, playerNames)) return null;
+
+	const splits: string[] = [];
+
+	// For each player, add a |split|pN block with colored HTML (secret) and empty (shared)
+	for (const player of players) {
+		const color = usernameColor(player.name);
+		const html = colorizedBattleHTML(line, player.slot, color, playerNames);
+		if (!html) continue;
+		splits.push(`|split|${player.slot}`);
+		splits.push(`|raw|<div class="pokemon-highlight">${html}</div>`);
+		splits.push('');
+	}
+
+	// For spectators (channel 0), add uncolored text
+	const spectatorHtml = colorizedBattleHTML(line, '', '', playerNames);
+	if (spectatorHtml) {
+		splits.push(`|split|p0`);
+		splits.push(`|raw|<div class="pokemon-highlight">${spectatorHtml}</div>`);
+		splits.push('');
+	}
+
+	// Add [silent] to the original protocol line to suppress default client text
+	const silentLine = line + '|[silent]';
+
+	return { silentLine, splits };
+}
 
 export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 	readonly slot: SideID;
@@ -114,6 +262,8 @@ export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 	 * in which case players will need to bring their own team.
 	 */
 	hasTeam: boolean;
+	isBot: boolean;
+	botDifficulty: BattleBot.BotDifficulty | null;
 	constructor(user: User | string | null, game: RoomBattle, num: PlayerIndex) {
 		super(user, game, num);
 		if (typeof user === 'string') user = null;
@@ -134,6 +284,8 @@ export class RoomBattlePlayer extends RoomGamePlayer<RoomBattle> {
 		this.knownActive = true;
 		this.invite = '';
 		this.hasTeam = false;
+		this.isBot = false;
+		this.botDifficulty = null;
 
 		if (user) {
 			user.games.add(this.game.roomid);
@@ -496,6 +648,10 @@ export interface RoomBattleOptions {
 	 * rather than a battle.
 	 */
 	isBestOfSubBattle?: boolean;
+	/**
+	 * Override the format's playerCount for dynamic-size battles (e.g. Mass FFA lobby).
+	 */
+	playerCount?: number;
 }
 
 export class RoomBattle extends RoomGame<RoomBattlePlayer> {
@@ -528,6 +684,30 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	p2: RoomBattlePlayer = null!;
 	p3: RoomBattlePlayer = null!;
 	p4: RoomBattlePlayer = null!;
+	/** Look up a player by their slot string (p1, p2, … p100). */
+	playerBySlot(slot: string): RoomBattlePlayer | undefined {
+		return this.players.find(p => p.slot === slot);
+	}
+	/**
+	 * Tracks the most-recently-seen active species name for each slot,
+	 * so bot AI can make type-aware decisions about the opponent.
+	 * Key: slot ('p1', 'p2', …), value: species name (e.g. 'Charizard').
+	 */
+	botOpponentSpecies: Map<string, string> = new Map();
+	/**
+	 * Track ALL opponent species revealed during the battle (for bot AI).
+	 * Key: slot ('p1', 'p2', …), value: Set of species names seen.
+	 */
+	botOpponentTeam: Map<string, Set<string>> = new Map();
+	/**
+	 * Track the current turn number for bot AI context.
+	 */
+	botTurnCount = 0;
+	/**
+	 * Track stat boosts for all active Pokemon (for bot AI).
+	 * Key: slot identifier (e.g. 'p1a'), value: boost map {atk: 2, spa: 1, ...}
+	 */
+	botBoosts: Map<string, Record<string, number>> = new Map();
 	inviteOnlySetter: ID | null = null;
 	logData: AnyObject | null = null;
 	endType: 'forfeit' | 'forced' | 'normal' = 'normal';
@@ -555,7 +735,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		this.challengeType = options.challengeType || 'challenge';
 		this.rated = options.rated === true ? 1 : options.rated || 0;
 		this.ladder = typeof format.rated === 'string' ? toID(format.rated) : options.format;
-		this.playerCap = format.playerCount;
+		this.playerCap = options.playerCount ?? format.playerCount;
 
 		this.stream = PM.createStream();
 
@@ -568,12 +748,13 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 
 		this.room.battle = this;
 
-		const battleOptions = {
+		const battleOptions: Record<string, any> = {
 			formatid: this.format,
 			roomid: this.roomid,
 			rated: ratedMessage,
 			seed: options.seed,
 		};
+		if (options.playerCount) battleOptions.playerCount = options.playerCount;
 		if (options.inputLog) {
 			void this.stream.write(options.inputLog);
 		} else {
@@ -663,7 +844,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return false;
 		}
 
-		const validSlots = this.players.filter(player => !player.id).map(player => player.slot);
+		const validSlots = this.players.filter(player => !player.id && !player.isBot).map(player => player.slot);
 
 		if (slot && !validSlots.includes(slot)) {
 			user.popup(`This battle already has a user in slot ${slot}.`);
@@ -682,14 +863,15 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		slot ??= validSlots[0];
 
-		if (this[slot].invite === user.id) {
+		const slotPlayer = this.playerBySlot(slot);
+		if (slotPlayer?.invite === user.id) {
 			this.room.auth.set(user.id, Users.PLAYER_SYMBOL);
 		} else if (!user.can('joinbattle', null, this.room)) {
 			user.popup(`You must be set as a player to join a battle you didn't start. Ask a player to use /addplayer on you to join this battle.`);
 			return false;
 		}
 
-		this.setPlayerUser(this[slot], user, playerOpts);
+		this.setPlayerUser(slotPlayer!, user, playerOpts);
 		if (validSlots.length - 1 <= 0) {
 			// all players have joined, start the battle
 			// onCreateBattleRoom crashes if some users are unavailable at start of battle
@@ -768,44 +950,202 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			resolver(lines);
 			break;
 
-		case 'update':
-			for (const line of lines.slice(1)) {
+		case 'update': {
+			// Build player name lookup for colorization
+			const playerNames = new Map<string, string>();
+			for (const player of this.players) {
+				playerNames.set(player.slot, player.name);
+			}
+
+			const updateLines = lines.slice(1);
+			let i = 0;
+			while (i < updateLines.length) {
+				const line = updateLines[i];
+
 				if (line.startsWith('|turn|')) {
 					this.turn = parseInt(line.slice(6));
+					this.botTurnCount = this.turn;
 				}
-				this.room.add(line);
+
+				// Track opponent species, boosts, and battle events for bot AI
+				const trackLine = (l: string) => {
+					if (l.startsWith('|switch|') || l.startsWith('|drag|') || l.startsWith('|replace|')) {
+						const parts = l.split('|');
+						if (parts.length >= 4) {
+							const slotStr = parts[2];
+							const slotMatch = slotStr.match(/^(p\d+)/);
+							const detailsStr = parts[3];
+							if (slotMatch && detailsStr) {
+								const slot = slotMatch[1];
+								const species = detailsStr.split(',')[0].trim();
+								this.botOpponentSpecies.set(slot, species);
+								if (!this.botOpponentTeam.has(slot)) {
+									this.botOpponentTeam.set(slot, new Set());
+								}
+								this.botOpponentTeam.get(slot)!.add(species);
+								// Reset boosts on switch — switching out clears all stat stages
+								const posMatch = slotStr.match(/^(p\d+[a-z])/);
+								if (posMatch) {
+									this.botBoosts.set(posMatch[1], {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+								}
+							}
+						}
+					}
+					// Track stat boosts: |-boost|p1a: Masquerain|spa|1
+					if (l.startsWith('|-boost|') || l.startsWith('|-unboost|')) {
+						const isBoost = l.startsWith('|-boost|');
+						const parts = l.split('|');
+						if (parts.length >= 5) {
+							const posMatch = parts[2].match(/^(p\d+[a-z])/);
+							if (posMatch) {
+								const pos = posMatch[1];
+								const stat = parts[3];
+								const amount = parseInt(parts[4]) || 1;
+								if (!this.botBoosts.has(pos)) {
+									this.botBoosts.set(pos, {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+								}
+								const boosts = this.botBoosts.get(pos)!;
+								if (isBoost) {
+									boosts[stat] = Math.min((boosts[stat] || 0) + amount, 6);
+								} else {
+									boosts[stat] = Math.max((boosts[stat] || 0) - amount, -6);
+								}
+							}
+						}
+					}
+					// Track set-boost: |-setboost|p1a: Pokemon|stat|amount
+					if (l.startsWith('|-setboost|')) {
+						const parts = l.split('|');
+						if (parts.length >= 5) {
+							const posMatch = parts[2].match(/^(p\d+[a-z])/);
+							if (posMatch) {
+								const pos = posMatch[1];
+								const stat = parts[3];
+								const amount = parseInt(parts[4]) || 0;
+								if (!this.botBoosts.has(pos)) {
+									this.botBoosts.set(pos, {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+								}
+								this.botBoosts.get(pos)![stat] = Math.max(-6, Math.min(6, amount));
+							}
+						}
+					}
+					// Clear boosts on |-clearallboost| or |-clearboost|
+					if (l.startsWith('|-clearallboost')) {
+						this.botBoosts.clear();
+					}
+					if (l.startsWith('|-clearboost|') || l.startsWith('|-clearnegativeboost|') || l.startsWith('|-clearpositiveboost|')) {
+						const parts = l.split('|');
+						if (parts.length >= 3) {
+							const posMatch = parts[2].match(/^(p\d+[a-z])/);
+							if (posMatch) {
+								this.botBoosts.set(posMatch[1], {atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0});
+							}
+						}
+					}
+				};
+
+				if (line.startsWith('|split|')) {
+					// This is a sim-generated split block (3 lines: split marker, secret, shared)
+					const secretLine = updateLines[i + 1] || '';
+					const sharedLine = updateLines[i + 2] || '';
+					trackLine(secretLine);
+
+					// Try to colorize the secret line (e.g. |switch| with exact HP)
+					const colorResult = buildColorSplits(secretLine, this.players, playerNames);
+					if (colorResult) {
+						// Add the original split with [silent] appended to both lines
+						this.room.add(line); // |split|pN
+						this.room.add(secretLine + '|[silent]');
+						this.room.add(sharedLine ? sharedLine + '|[silent]' : '');
+						// Add our colored splits
+						for (const splitLine of colorResult.splits) {
+							this.room.add(splitLine);
+						}
+					} else {
+						// No colorization — pass through unchanged
+						this.room.add(line);
+						this.room.add(secretLine);
+						this.room.add(sharedLine);
+					}
+					i += 3;
+					continue;
+				}
+
+				trackLine(line);
+
+				// Try to colorize non-split lines (e.g. |move|, |faint|)
+				const colorResult = buildColorSplits(line, this.players, playerNames);
+				if (colorResult) {
+					this.room.add(colorResult.silentLine);
+					for (const splitLine of colorResult.splits) {
+						this.room.add(splitLine);
+					}
+				} else {
+					this.room.add(line);
+				}
+
 				if (line.startsWith(`|bigerror|You will auto-tie if `) && Config.allowrequestingties && !this.room.tour) {
 					this.room.add(`|-hint|If you want to tie earlier, consider using \`/offertie\`.`);
 				}
+
+				i++;
 			}
 			this.room.update();
 			this.checkActive();
 			break;
+		}
 
 		case 'sideupdate': {
-			const slot = lines[1] as SideID;
-			const player = this[slot];
+			const slot = lines[1];
+			const player = this.playerBySlot(slot);
 			if (lines[2].startsWith(`|error|[Invalid choice] Can't do anything`)) {
 				// ... should not happen
 			} else if (lines[2].startsWith(`|error|[Invalid choice]`)) {
 				const undoFailed = lines[2].includes(`Can't undo`);
-				const request = this[slot].request;
-				request.isWait = undoFailed ? 'cantUndo' : false;
-				request.choice = '';
+				if (player) {
+					const request = player.request;
+					request.isWait = undoFailed ? 'cantUndo' : false;
+					request.choice = '';
+				}
 			} else if (lines[2].startsWith(`|request|`)) {
 				this.rqid++;
 				const request = JSON.parse(lines[2].slice(9));
 				request.rqid = this.rqid;
 				const requestJSON = JSON.stringify(request);
-				this[slot].request = {
-					rqid: this.rqid,
-					request: requestJSON,
-					isWait: request.wait ? 'cantUndo' : false,
-					choice: '',
-				};
+				if (player) {
+					player.request = {
+						rqid: this.rqid,
+						request: requestJSON,
+						isWait: request.wait ? 'cantUndo' : false,
+						choice: '',
+					};
+				}
 				this.requestCount++;
-				player?.sendRoom(`|request|${requestJSON}`);
-				if (!request.update) this.timer.nextRequest(player);
+				if (player?.isBot && player.botDifficulty) {
+					// Bot: respond automatically instead of forwarding to a user
+					if (!request.wait) {
+						// Find the slot of the opponent (any non-bot active slot)
+						const oppSlot = this.players
+							.find(p => p.slot !== slot && !p.isBot)?.slot ?? '';
+						const oppSpecies = this.botOpponentSpecies.get(oppSlot) ?? '';
+						const oppTeam = this.botOpponentTeam.get(oppSlot);
+						const oppRevealedTeam = oppTeam ? [...oppTeam] : [];
+						// Gather boost data for the bot's active position and opponent's active
+						const botPos = slot + 'a'; // e.g. 'p2a'
+						const oppPos = oppSlot + 'a'; // e.g. 'p1a'
+						const selfBoosts = this.botBoosts.get(botPos) ?? null;
+						const oppBoosts = this.botBoosts.get(oppPos) ?? null;
+						BattleBot.respond(
+							this.stream, slot, requestJSON,
+							player.botDifficulty, oppSpecies,
+							oppRevealedTeam, this.botTurnCount,
+							selfBoosts, oppBoosts,
+						);
+					}
+				} else {
+					player?.sendRoom(`|request|${requestJSON}`);
+					if (!request.update) this.timer.nextRequest(player);
+				}
 				break;
 			}
 			player?.sendRoom(lines[2]);
@@ -999,6 +1339,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			player.active = true;
 			this.timer.checkActivity();
 			this.room.add(`|player|${player.slot}|${user.name}|${user.avatar}|`);
+			// Inject a hidden color marker so CSS :has() can color the stat bar
+			const hueBucket = usernameHueBucket(user.name);
+			this.room.add(`|split|${player.slot}`);
+			this.room.add(`|raw|<div class="uhue uhue-${hueBucket}" style="display:none"></div>`);
+			this.room.add('');
 			Chat.runHandlers('onBattleJoin', player.slot, user, this);
 		}
 	}
@@ -1058,7 +1403,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		if (typeof user === 'string') user = null;
 		if (!player) return null;
 		const slot = player.slot;
-		this[slot] = player;
+		(this as any)[slot] = player;
 
 		if (playerOpts) {
 			const options = {
@@ -1075,6 +1420,43 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			this.room.auth.set(player.id, Users.PLAYER_SYMBOL);
 		}
 		if (user?.inRooms.has(this.roomid)) this.onConnect(user);
+		return player;
+	}
+
+	/**
+	 * Add an AI bot to an open player slot.
+	 * @param botName  Display name, e.g. "BotHard2"
+	 * @param team     Pre-built team string, or '' for random
+	 * @param targetSlot  Specific slot to place the bot in (e.g. 'p2')
+	 */
+	addBotPlayer(botName: string, team = '', targetSlot?: SideID) {
+		const difficulty = BattleBot.parseBotName(botName);
+		if (!difficulty) throw new Error(`Invalid bot name: ${botName}`);
+
+		// Reuse an existing empty player slot (created by the constructor when
+		// fewer players were provided than playerCap) instead of creating a new
+		// slot that the battle engine doesn't expect.
+		let player: RoomBattlePlayer | undefined | null;
+		if (targetSlot) {
+			player = this.playerBySlot(targetSlot);
+			if (!player || player.id || player.isBot || player.hasTeam) return null;
+		} else {
+			player = this.players.find(p => !p.id && !p.isBot && !p.hasTeam);
+		}
+		if (player) {
+			player.name = botName;
+		} else {
+			player = super.addPlayer(botName);
+			if (!player) return null;
+		}
+
+		player.isBot = true;
+		player.botDifficulty = difficulty;
+		player.knownActive = true;
+		(this as any)[player.slot] = player;
+		const options = { name: botName, avatar: 'unknownf', team: team || undefined, rating: 0 };
+		void this.stream.write(`>player ${player.slot} ${JSON.stringify(options)}`);
+		player.hasTeam = true;
 		return player;
 	}
 
@@ -1163,6 +1545,11 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			if (playerOpts) player.hasTeam = true;
 
 			this.room.add(`|player|${slot}|${player.name}|${user.avatar}|`);
+			// Inject a hidden color marker so CSS :has() can color the stat bar
+			const hueBucket = usernameHueBucket(player.name);
+			this.room.add(`|split|${slot}`);
+			this.room.add(`|raw|<div class="uhue uhue-${hueBucket}" style="display:none"></div>`);
+			this.room.add('');
 			Chat.runHandlers('onBattleJoin', slot as string, user, this);
 		} else {
 			player.active = false;
@@ -1179,8 +1566,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	start() {
 		if (this.gameType === 'multi') {
 			this.room.title = `Team ${this.p1.name} vs. Team ${this.p2.name}`;
-		} else if (this.gameType === 'freeforall') {
-			// p1 vs. p2 vs. p3 vs. p4 is too long of a title
+		} else if (this.gameType === 'freeforall' || this.gameType === '2v1') {
+			// Long player lists collapse to "X and friends"
 			this.room.title = `${this.p1.name} and friends`;
 		} else {
 			this.room.title = `${this.p1.name} vs. ${this.p2.name}`;
@@ -1204,6 +1591,7 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		const delayStart = this.options.delayedStart || !!this.options.inputLog;
 		const users = this.players.map(player => {
+			if (player.isBot) return null; // bots don't have real User objects
 			const user = player.getUser();
 			if (!user && !delayStart) {
 				throw new Error(`User ${player.id} not found on ${this.roomid} battle creation`);
@@ -1211,7 +1599,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			return user;
 		});
 		if (!delayStart) {
-			Rooms.global.onCreateBattleRoom(users as User[], this.room, { rated: this.rated });
+			const realUsers = users.filter((u): u is User => u !== null);
+			Rooms.global.onCreateBattleRoom(realUsers, this.room, { rated: this.rated });
 			this.started = true;
 		} else if (delayStart === 'multi') {
 			this.room.add(`|uhtml|invites|<div class="broadcast broadcast-blue"><strong>This is a 4-player challenge battle</strong><br />The players will need to add more players before the battle can start.</div>`);
@@ -1219,8 +1608,54 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 	}
 
 	invitesFull() {
-		return this.players.every(player => player.id || player.invite);
+		// For FFA, "full enough" means >= 4 filled — triggers a broadcast of the invite
+		// form so the "Start FFA" button becomes visible to all players.
+		if (this.gameType === 'freeforall') {
+			return this.players.filter(p => p.id || p.invite || p.isBot).length >= 4;
+		}
+		return this.players.every(player => player.id || player.invite || player.isBot);
 	}
+
+	/**
+	 * Force-start a FFA battle with only the currently-filled player slots.
+	 * Trims empty slots and fires up the sim with the actual player count.
+	 */
+	startFFA() {
+		if (this.started) throw new Error('Battle already started');
+		if (this.gameType !== 'freeforall') throw new Error('Not a FFA battle');
+
+		const filledPlayers = this.players.filter(p => p.id || p.isBot || p.hasTeam);
+		if (filledPlayers.length < 4) {
+			throw new Error(`Need at least 4 players to start (have ${filledPlayers.length})`);
+		}
+
+		// Remove empty player slots
+		const emptyPlayers = this.players.filter(p => !p.id && !p.isBot && !p.hasTeam);
+		for (const p of emptyPlayers) {
+			const idx = this.players.indexOf(p);
+			if (idx >= 0) this.players.splice(idx, 1);
+			delete (this as any)[p.slot];
+		}
+		this.playerCap = filledPlayers.length;
+
+		// Tell the sim to discard the unfilled sides and start.
+		// Note: in >eval, the battle object is available as `battle`, not `this`.
+		const n = filledPlayers.length;
+		void this.stream.write(
+			`>eval ` +
+			`battle.sides = battle.sides.slice(0, ${n}); ` +
+			`for (let i = 0; i < battle.sides.length; i++) { battle.sides[i].n = i; battle.sides[i].id = 'p' + (i + 1); } ` +
+			`battle.activePerHalf = Math.ceil(${n} / 2); ` +
+			`if (!battle.started) battle.start();`
+		);
+
+		// Server-side bookkeeping (mirrors what addplayer does when all slots filled)
+		const users = filledPlayers.map(p => p.getUser()).filter(Boolean) as User[];
+		Rooms.global.onCreateBattleRoom(users, this.room, { rated: this.rated });
+		this.started = true;
+		this.room.add(`|uhtmlchange|invites|`).update();
+	}
+
 	/** true = send to every player; falsy = send to no one */
 	sendInviteForm(connection: Connection | User | null | boolean) {
 		if (connection === true) {
@@ -1230,8 +1665,8 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		if (!connection) return;
 
 		const playerForms = this.players.map(player => (
-			player.id ? (
-				`<form><label>Player ${player.num}: <strong>${player.name}</strong></label></form>`
+			player.id || player.isBot ? (
+				`<form><label>Player ${player.num}: <strong>${player.name}</strong>${player.isBot ? ' (Bot)' : ''}</label></form>`
 			) : player.invite ? (
 				`<form data-submitsend="/msgroom ${this.roomid},/uninvitebattle ${player.invite}"><label>Player ${player.num}: <strong>${player.invite}</strong> (invited) <button type="submit">Uninvite</button></label></form>`
 			) : (
@@ -1242,9 +1677,13 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 			[playerForms[1], playerForms[2]] = [playerForms[2], playerForms[1]];
 			playerForms.splice(2, 0, '&mdash; vs &mdash;');
 		}
+		const filledCount = this.players.filter(p => p.id || p.isBot || p.hasTeam).length;
+		const startButton = (this.gameType === 'freeforall' && filledCount >= 4)
+			? `<br /><form data-submitsend="/msgroom ${this.roomid},/ffastartbattle"><button class="button" type="submit">Start FFA (${filledCount} players)</button></form>`
+			: '';
 		connection.sendTo(
 			this.room,
-			`|uhtmlchange|invites|<div class="broadcast broadcast-blue"><strong>This battle needs more players to start</strong><br /><br />${playerForms.join(``)}</div>`
+			`|uhtmlchange|invites|<div class="broadcast broadcast-blue"><strong>This battle needs more players to start</strong><br /><br />${playerForms.join(``)}${startButton}</div>`
 		);
 	}
 
@@ -1258,6 +1697,9 @@ export class RoomBattle extends RoomGame<RoomBattlePlayer> {
 		}
 		this.playerTable = {};
 		this.players = [];
+		for (const player of this.players) {
+			(this as any)[player.slot] = null;
+		}
 		this.p1 = null!;
 		this.p2 = null!;
 		this.p3 = null!;

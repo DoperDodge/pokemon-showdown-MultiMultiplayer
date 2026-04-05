@@ -1167,6 +1167,18 @@ export const commands: Chat.ChatCommands = {
 	},
 	hidereplayhelp: [`/hidereplay - Hides the replay of the current battle. Requires: ${Users.PLAYER_SYMBOL} ~`],
 
+	ffastartbattle(target, room, user) {
+		room = this.requireRoom();
+		if (!room.battle) throw new Chat.ErrorMessage(this.tr`You can only do this in battle rooms.`);
+		if (room.rated) throw new Chat.ErrorMessage(this.tr`You can only start unrated battles this way.`);
+		this.checkCan('joinbattle', null, room);
+		try {
+			room.battle.startFFA();
+		} catch (err: any) {
+			throw new Chat.ErrorMessage(err.message);
+		}
+	},
+
 	addplayer: 'invitebattle',
 	invitebattle(target, room, user, connection) {
 		room = this.requireRoom();
@@ -1175,18 +1187,44 @@ export const commands: Chat.ChatCommands = {
 
 		this.checkCan('joinbattle', null, room);
 
+		const battle = room.battle;
 		const { targetUser, targetUsername: name, rest: slot } = this.splitUser(target, { exactName: true });
-		if (slot !== 'p1' && slot !== 'p2' && slot !== 'p3' && slot !== 'p4') {
-			this.errorReply(this.tr`Player must be set to "p1" or "p2", not "${slot}".`);
+		const slotMatch = /^p(\d+)$/.exec(slot);
+		const slotNum = slotMatch ? parseInt(slotMatch[1]) : 0;
+		if (!slotNum || slotNum < 1 || slotNum > battle.playerCap) {
+			this.errorReply(this.tr`Player must be set to "p1" through "p${battle.playerCap}", not "${slot}".`);
 			return this.parse('/help addplayer');
 		}
-
-		const battle = room.battle;
 		const player = battle[slot];
 
 		if (!player) {
 			throw new Chat.ErrorMessage(`This battle does not support having players in ${slot}`);
 		}
+
+		// ── Bot shortcut: add a bot directly to the slot ──
+		const BattleBot = require('../battle-bot') as typeof import('../battle-bot');
+		if (BattleBot.parseBotName(name)) {
+			if (player.id || player.isBot) {
+				battle.sendInviteForm(connection);
+				throw new Chat.ErrorMessage(this.tr`This room already has a player in slot ${slot}.`);
+			}
+			battle.addBotPlayer(name, '', slot as SideID);
+			// Check if all slots are now filled → start the battle
+			const emptySlots = battle.players.filter(
+				(p: any) => !p.id && !p.isBot && !p.hasTeam
+			);
+			if (emptySlots.length === 0 && !battle.started) {
+				const users = battle.players.map(p => p.getUser()).filter(Boolean) as User[];
+				Rooms.global.onCreateBattleRoom(users, room, { rated: battle.rated });
+				battle.started = true;
+				room.add(`|uhtmlchange|invites|`);
+			} else {
+				battle.sendInviteForm(battle.invitesFull() ? true : connection);
+			}
+			return this.add(`||Bot ${name} added to ${slot}!`);
+		}
+		// ──────────────────────────────────────────────────────────────────
+
 		if (!targetUser) {
 			battle.sendInviteForm(connection);
 			throw new Chat.ErrorMessage(this.tr`User ${name} not found.`);
@@ -1491,6 +1529,46 @@ export const commands: Chat.ChatCommands = {
 	chall: 'challenge',
 	challenge(target, room, user, connection) {
 		const { targetUser, targetUsername, rest: formatName } = this.splitUser(target);
+
+		// ── Bot challenge shortcut ──────────────────────────────────────────
+		const BattleBot = require('../battle-bot') as typeof import('../battle-bot');
+		if (BattleBot.parseBotName(targetUsername)) {
+			const format = Dex.formats.get(formatName);
+			if (!format.exists) return this.popupReply(`Unknown format: ${formatName}`);
+			if (Punishments.isBattleBanned(user)) {
+				return this.popupReply(this.tr`You are banned from battling and cannot challenge users.`);
+			}
+			const humanTeam = format.team ? '' : user.battleSettings?.team ?? '';
+			// Use delayedStart so the constructor doesn't throw when
+			// empty player slots have no real User objects yet.
+			// If the format is 2-player, add the bot right away and start;
+			// if multi/FFA (>2 players), show the invite form for remaining slots.
+			const needsMorePlayers = format.playerCount > 2;
+			const newRoom = Rooms.createBattle({
+				format: format.id,
+				rated: false,
+				challengeType: 'challenge',
+				delayedStart: needsMorePlayers ? 'multi' : true,
+				players: [
+					{ user, team: humanTeam },
+				] as any[],
+			} as any);
+			if (!newRoom?.battle) return this.popupReply(`Failed to create battle.`);
+			// Add only the one challenged bot.
+			newRoom.battle.addBotPlayer(targetUsername);
+			if (!needsMorePlayers) {
+				// 2-player format: all slots filled, start immediately.
+				newRoom.battle.started = true;
+				Rooms.global.onCreateBattleRoom([user], newRoom, { rated: 0 });
+			} else {
+				// Multi-player format: show invite form so the user can
+				// add more real players or bots to the remaining slots.
+				newRoom.battle.sendInviteForm(true);
+			}
+			return;
+		}
+		// ──────────────────────────────────────────────────────────────────
+
 		if (!targetUser?.connected) {
 			return this.popupReply(this.tr`The user '${targetUsername}' was not found.`);
 		}

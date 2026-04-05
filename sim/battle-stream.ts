@@ -113,16 +113,6 @@ export class BattleStream extends Streams.ObjectReadWriteStream<string> {
 			const [slot, optionsText] = splitFirst(message, ' ');
 			this.battle!.setPlayer(slot as SideID, JSON.parse(optionsText));
 			break;
-		case 'p1':
-		case 'p2':
-		case 'p3':
-		case 'p4':
-			if (message === 'undo') {
-				this.battle!.undoChoice(type);
-			} else {
-				this.battle!.choose(type, message);
-			}
-			break;
 		case 'forcewin':
 		case 'forcetie':
 			this.battle!.win(type === 'forcewin' ? message as SideID : null);
@@ -231,6 +221,14 @@ export class BattleStream extends Streams.ObjectReadWriteStream<string> {
 		case 'version-origin':
 			break;
 		default:
+			if (/^p\d+$/.test(type)) {
+				if (message === 'undo') {
+					this.battle!.undoChoice(type);
+				} else {
+					this.battle!.choose(type, message);
+				}
+				break;
+			}
 			throw new Error(`Unrecognized command ">${type} ${message}"`);
 		}
 	}

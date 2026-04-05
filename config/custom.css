@@ -1,0 +1,78 @@
+/**
+ * Custom CSS for Pokemon Showdown MultiMultiplayer
+ *
+ * 1. Styles colored Pokemon name highlights in the battle log
+ *    so they look like normal battle text instead of notice boxes.
+ * 2. Colors the user's side Pokemon stat bar names on the battle field
+ *    using the same hue as their username via CSS :has() selectors.
+ */
+
+/* ── Battle Log: colored Pokemon messages ── */
+
+.battle-log .notice:has(.pokemon-highlight) {
+	border: none !important;
+	background: none !important;
+	padding: 0 3px !important;
+	margin: 0 !important;
+}
+
+.pokemon-highlight {
+	font-size: 9pt;
+}
+
+/* Hide the color marker div (injected via |raw|) */
+.battle-log .notice:has(.uhue) {
+	display: none !important;
+	height: 0 !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	border: none !important;
+}
+
+/* ── Battle Field: color stat bar names by username hue ──
+ *
+ * The server injects a hidden <div class="uhue uhue-N"> into the battle log.
+ * Using :has() we detect it from a common ancestor and apply the matching
+ * color to .lstatbar strong (the user's side Pokemon names).
+ *
+ * Hue buckets: 0, 10, 20, … 350  (36 rules)
+ * Lightness is raised to 75% for readability on the dark battle background.
+ * A colored glow (text-shadow) gives the "highlight" effect.
+ */
+
+[id^="room-battle"]:has(.uhue-0) .lstatbar strong { color: hsl(0,85%,75%) !important; text-shadow: 0 0 8px hsla(0,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-10) .lstatbar strong { color: hsl(10,85%,75%) !important; text-shadow: 0 0 8px hsla(10,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-20) .lstatbar strong { color: hsl(20,85%,75%) !important; text-shadow: 0 0 8px hsla(20,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-30) .lstatbar strong { color: hsl(30,85%,75%) !important; text-shadow: 0 0 8px hsla(30,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-40) .lstatbar strong { color: hsl(40,85%,75%) !important; text-shadow: 0 0 8px hsla(40,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-50) .lstatbar strong { color: hsl(50,85%,75%) !important; text-shadow: 0 0 8px hsla(50,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-60) .lstatbar strong { color: hsl(60,85%,75%) !important; text-shadow: 0 0 8px hsla(60,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-70) .lstatbar strong { color: hsl(70,85%,75%) !important; text-shadow: 0 0 8px hsla(70,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-80) .lstatbar strong { color: hsl(80,85%,75%) !important; text-shadow: 0 0 8px hsla(80,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-90) .lstatbar strong { color: hsl(90,85%,75%) !important; text-shadow: 0 0 8px hsla(90,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-100) .lstatbar strong { color: hsl(100,85%,75%) !important; text-shadow: 0 0 8px hsla(100,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-110) .lstatbar strong { color: hsl(110,85%,75%) !important; text-shadow: 0 0 8px hsla(110,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-120) .lstatbar strong { color: hsl(120,85%,75%) !important; text-shadow: 0 0 8px hsla(120,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-130) .lstatbar strong { color: hsl(130,85%,75%) !important; text-shadow: 0 0 8px hsla(130,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-140) .lstatbar strong { color: hsl(140,85%,75%) !important; text-shadow: 0 0 8px hsla(140,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-150) .lstatbar strong { color: hsl(150,85%,75%) !important; text-shadow: 0 0 8px hsla(150,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-160) .lstatbar strong { color: hsl(160,85%,75%) !important; text-shadow: 0 0 8px hsla(160,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-170) .lstatbar strong { color: hsl(170,85%,75%) !important; text-shadow: 0 0 8px hsla(170,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-180) .lstatbar strong { color: hsl(180,85%,75%) !important; text-shadow: 0 0 8px hsla(180,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-190) .lstatbar strong { color: hsl(190,85%,75%) !important; text-shadow: 0 0 8px hsla(190,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-200) .lstatbar strong { color: hsl(200,85%,75%) !important; text-shadow: 0 0 8px hsla(200,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-210) .lstatbar strong { color: hsl(210,85%,75%) !important; text-shadow: 0 0 8px hsla(210,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-220) .lstatbar strong { color: hsl(220,85%,75%) !important; text-shadow: 0 0 8px hsla(220,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-230) .lstatbar strong { color: hsl(230,85%,75%) !important; text-shadow: 0 0 8px hsla(230,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-240) .lstatbar strong { color: hsl(240,85%,75%) !important; text-shadow: 0 0 8px hsla(240,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-250) .lstatbar strong { color: hsl(250,85%,75%) !important; text-shadow: 0 0 8px hsla(250,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-260) .lstatbar strong { color: hsl(260,85%,75%) !important; text-shadow: 0 0 8px hsla(260,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-270) .lstatbar strong { color: hsl(270,85%,75%) !important; text-shadow: 0 0 8px hsla(270,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-280) .lstatbar strong { color: hsl(280,85%,75%) !important; text-shadow: 0 0 8px hsla(280,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-290) .lstatbar strong { color: hsl(290,85%,75%) !important; text-shadow: 0 0 8px hsla(290,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-300) .lstatbar strong { color: hsl(300,85%,75%) !important; text-shadow: 0 0 8px hsla(300,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-310) .lstatbar strong { color: hsl(310,85%,75%) !important; text-shadow: 0 0 8px hsla(310,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-320) .lstatbar strong { color: hsl(320,85%,75%) !important; text-shadow: 0 0 8px hsla(320,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-330) .lstatbar strong { color: hsl(330,85%,75%) !important; text-shadow: 0 0 8px hsla(330,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-340) .lstatbar strong { color: hsl(340,85%,75%) !important; text-shadow: 0 0 8px hsla(340,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
+[id^="room-battle"]:has(.uhue-350) .lstatbar strong { color: hsl(350,85%,75%) !important; text-shadow: 0 0 8px hsla(350,100%,60%,0.7), 0 1px 0 #000, 0 -1px 0 #000, 1px 0 0 #000, -1px 0 0 #000 !important; }
