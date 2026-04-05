@@ -1,0 +1,5 @@
+FROM node:22-slim
+WORKDIR /app
+COPY client-serve.js .
+EXPOSE 3000
+CMD ["node", "client-serve.js"]
