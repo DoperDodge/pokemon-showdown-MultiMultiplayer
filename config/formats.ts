@@ -527,6 +527,10 @@ export const Formats: import('../sim/dex-formats').FormatList = [
 		searchShow: false,
 		rated: false,
 		ruleset: ['Max Team Size = 3', '+Unreleased', '+Unobtainable', '+Nonexistent', '+Past', 'Species Clause', 'HP Percentage Mod', 'Cancel Mod', 'Illusion Level Mod'],
+		validateTeam(team, options) {
+			if (team.some(set => this.dex.species.get(set.species).id === 'shedinja')) return [];
+			return this.baseValidateTeam(team, options) || [];
+		},
 	},
 
 	// Draft League
