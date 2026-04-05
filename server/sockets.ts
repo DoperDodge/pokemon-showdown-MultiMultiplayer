@@ -343,15 +343,16 @@ export class ServerStream extends Streams.ObjectReadWriteStream<string> {
 			const staticServer = new StaticServer('./server/static');
 			const staticRequestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => {
 				// console.log(`static rq: ${req.socket.remoteAddress}:${req.socket.remotePort} -> ${req.socket.localAddress}:${req.socket.localPort} - ${req.method} ${req.url} ${req.httpVersion} - ${req.rawHeaders.join('|')}`);
+
+				// Let SockJS handle /showdown/* entirely — don't touch the request
+				// body (req.resume) or it corrupts XHR/long-poll fallback transports.
+				if (req.url?.startsWith('/showdown/') || req.url === '/showdown') return;
+
 				req.resume();
 				req.addListener('end', () => {
 					if (config.customhttpresponse?.(req, res)) {
 						return;
 					}
-
-					// Let SockJS handle its own HTTP transports (XHR, long-poll, etc.)
-					// so same-origin clients can fall back when WebSocket is unavailable.
-					if (req.url?.startsWith('/showdown/')) return;
 
 					let server = staticServer;
 					if (req.url) {
