@@ -349,6 +349,10 @@ export class ServerStream extends Streams.ObjectReadWriteStream<string> {
 						return;
 					}
 
+					// Let SockJS handle its own HTTP transports (XHR, long-poll, etc.)
+					// so same-origin clients can fall back when WebSocket is unavailable.
+					if (req.url?.startsWith('/showdown/')) return;
+
 					let server = staticServer;
 					if (req.url) {
 						if (req.url === '/custom.css' || req.url.startsWith('/custom.css?')) {
