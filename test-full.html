@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<title>Full Message Test</title>
+<h1>PS Full Message Test</h1>
+<div id="log" style="font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all"></div>
+<script src="https://play.pokemonshowdown.com/js/lib/sockjs-1.4.0-nwjsfix.min.js"></script>
+<script>
+var log = document.getElementById('log');
+var msgCount = 0;
+function print(msg) { log.textContent += msg + '\n'; }
+
+print('Connecting...');
+var sock = new SockJS('https://web-production-e5034.up.railway.app/showdown');
+sock.onopen = function() { print('CONNECTED'); };
+sock.onmessage = function(e) {
+  msgCount++;
+  var lines = String(e.data).split('\n');
+  print('--- Message ' + msgCount + ' (' + lines.length + ' lines) ---');
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    print('  [' + i + '] ' + (line.length > 120 ? line.substring(0, 120) + '...(+' + (line.length-120) + ')' : line));
+  }
+};
+sock.onclose = function(e) { print('CLOSED: ' + e.code + ' ' + e.reason); };
+</script>
