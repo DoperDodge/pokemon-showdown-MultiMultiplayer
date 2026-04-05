@@ -124,3 +124,28 @@ if (process.env.NODE_ENV === 'development') {
 	exports.nothrottle = true;
 	exports.noipchecks = true;
 }
+
+// ---------------------------------------------------------------------------
+// Client redirect
+// ---------------------------------------------------------------------------
+
+/**
+ * If CLIENT_URL is set (e.g. https://your-client.up.railway.app), redirect
+ * bare visits to the game server over to the separate PS client deployment.
+ * This mirrors how psim.us works: server and client are on different domains
+ * so the WebSocket connection is cross-origin and works correctly.
+ *
+ * Set CLIENT_URL in Railway → game-server service → Variables.
+ */
+if (process.env.CLIENT_URL) {
+	const clientBase = process.env.CLIENT_URL.replace(/\/$/, '');
+	exports.customhttpresponse = function (req, res) {
+		// Only redirect the root and room paths, not API/asset requests.
+		if (req.url && (req.url === '/' || /^\/[a-z0-9][a-z0-9-]*\/?(\?.*)?$/i.test(req.url))) {
+			res.writeHead(302, { Location: clientBase + req.url });
+			res.end();
+			return true;
+		}
+		return false;
+	};
+}
