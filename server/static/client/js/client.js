@@ -2829,9 +2829,16 @@ function toId() {
 					}
 					var roomid = toRoomid(i);
 					if (roomid.substr(0, 7) === 'battle-') {
-						var p1 = data.rooms[i].p1.substr(1);
-						var p2 = data.rooms[i].p2.substr(1);
-						var ownBattle = (ownUserid === toUserid(p1) || ownUserid === toUserid(p2));
+						var _roomPlayers = []; var _ownBattle = false;
+						for (var _pni = 1; ; _pni++) {
+							var _pndata = data.rooms[i]['p' + _pni];
+							if (!_pndata) break;
+							var _pnname = _pndata.substr(1);
+							_roomPlayers.push(_pnname);
+							if (ownUserid === toUserid(_pnname)) _ownBattle = true;
+						}
+						var p1 = _roomPlayers[0] || '?'; var p2 = _roomPlayers[1] || '?';
+						var ownBattle = _ownBattle;
 						var room = '<span title="' + (BattleLog.escapeHTML(p1) || '?') + ' v. ' + (BattleLog.escapeHTML(p2) || '?') + '">' + '<a href="' + app.root + roomid + '" class="ilink' + ((ownBattle || app.rooms[i]) ? ' yours' : '') + '">' + roomrank + roomid.substr(7) + '</a></span>';
 						if (data.rooms[i].isPrivate) {
 							if (!privatebuf) privatebuf = '<br /><em>Private rooms:</em> ';
