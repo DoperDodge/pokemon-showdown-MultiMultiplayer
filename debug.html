@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<title>Config Debug</title>
+<h1>PS Config Debug</h1>
+<div id="log" style="font-family:monospace;white-space:pre"></div>
+<script>
+var Config = Config || {};
+Config.defaultserver = {
+  id: 'multimultiplayer',
+  host: 'web-production-e5034.up.railway.app',
+  port: 443,
+  httpport: 443,
+  registered: false
+};
+Config.routes = {
+  root: 'pokemonshowdown.com',
+  client: 'play.pokemonshowdown.com',
+  dex: 'dex.pokemonshowdown.com',
+  replays: 'replay.pokemonshowdown.com',
+  users: 'pokemonshowdown.com/users',
+  teams: 'teams.pokemonshowdown.com'
+};
+Config.whitelist = ['wikipedia.org'];
+Config.bannedHosts = ['cool.jit.su'];
+var log = document.getElementById('log');
+function print(msg) { log.textContent += msg + '\n'; }
+print('Config set: ' + JSON.stringify(Config.defaultserver));
+</script>
+<script src="https://play.pokemonshowdown.com/js/lib/sockjs-1.4.0-nwjsfix.min.js"></script>
+<script>
+// Intercept SockJS to see what URL client.js uses
+var _SockJS = SockJS;
+window.SockJS = function(url, opts) {
+  print('SockJS connecting to: ' + url);
+  var s = new _SockJS(url, opts);
+  s.addEventListener('open', function() { print('OPEN'); });
+  s.addEventListener('message', function(e) { print('MSG: ' + String(e.data).substring(0,100)); });
+  s.addEventListener('close', function(e) { print('CLOSED: ' + e.code + ' ' + e.reason); });
+  return s;
+};
+window.SockJS.prototype = _SockJS.prototype;
+print('SockJS interceptor ready');
+</script>
+<script src="https://play.pokemonshowdown.com/js/lib/jquery-2.2.4.min.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/jquery-cookie.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/autoresize.jquery.min.js"></script>
+<script src="https://play.pokemonshowdown.com/js/battle-sound.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/html-css-sanitizer-minified.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/lodash.core.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/backbone.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/d3.v3.min.js"></script>
+<script src="https://play.pokemonshowdown.com/js/battledata.js"></script>
+<script src="https://play.pokemonshowdown.com/js/storage.js"></script>
+<script src="https://play.pokemonshowdown.com/data/pokedex-mini.js"></script>
+<script src="https://play.pokemonshowdown.com/data/typechart.js"></script>
+<script src="https://web-production-e5034.up.railway.app/js/battle.js"></script>
+<script src="https://play.pokemonshowdown.com/js/lib/color-thief.min.js"></script>
+<script src="https://play.pokemonshowdown.com/data/commands.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-topbar.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-mainmenu.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-teambuilder.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-ladder.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-chat.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-chat-tournament.js"></script>
+<script src="https://play.pokemonshowdown.com/js/battle-tooltips.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-battle.js"></script>
+<script src="https://play.pokemonshowdown.com/js/client-rooms.js"></script>
+<script src="https://play.pokemonshowdown.com/data/graphics.js"></script>
+<script>
+print('All scripts loaded. Creating App...');
+try {
+  var app = new App();
+  print('App created OK');
+} catch(e) {
+  print('App ERROR: ' + e.message);
+}
+</script>
